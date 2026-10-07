@@ -38,6 +38,30 @@ the governance charter in [`docs/Gouvernance du code.docx`](docs/Gouvernance%20d
 - Classes: `PascalCase`
 - Comments only where they add real value
 
+## Secrets management
+
+Secrets never live in code or in Git. Rules enforced by the project:
+
+1. **Storage** — real values go in `backend/.env` (gitignored). Only
+   `backend/.env.example` (placeholders) is committed.
+2. **Masking** — `JWT_SECRET_KEY` and `DATABASE_URL` are typed `SecretStr`:
+   they print as `**********` in logs, errors and reprs. Read a real value only
+   with `.get_secret_value()` where strictly needed (e.g. JWT signing).
+3. **Fail fast** — the app refuses to start if a secret is missing, a known
+   placeholder, or if `JWT_SECRET_KEY` is shorter than 32 characters.
+   Staging (`APP_ENV=staging`) additionally refuses a `localhost` database URL.
+
+Generate a new JWT secret:
+
+```powershell
+cd backend
+uv run python scripts/generate_secret.py
+```
+
+On a staging/production server there is no `.env` file: variables are injected
+by the deployment platform as real environment variables, which always take
+priority over `.env`.
+
 ## Getting started
 
 Detailed setup instructions will be added as the project foundation is built
