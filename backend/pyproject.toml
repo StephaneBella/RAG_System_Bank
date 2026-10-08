@@ -20,7 +20,8 @@ dev = [
     "ruff>=0.16.10",
 ]
 
-# This is a tool that will be used for automatically formatting the code to make sur it follows the correct python 3.11 synthax
+# This is a tool that will be used for automatically formatting the code
+# to make sur it follows the correct python 3.11 synthax
 [tool.ruff]
 line-length = 100
 target-version = "py311"
