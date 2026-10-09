@@ -5,14 +5,8 @@ from app.core.security import verify_password
 from app.models.user import User, UserStatus
 
 
-def authenticate_user(
-    db: Session,
-    email: str,
-    password: str,
-) -> User | None:
-    user = db.scalar(
-        select(User).where(User.email == email)
-    )
+def authenticate_user(db: Session, email: str, password: str) -> User | None:
+    user = db.scalar(select(User).where(User.email == email))
 
     if user is None:
         return None
