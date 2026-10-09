@@ -33,5 +33,8 @@ jobs:
       - name: Run linting
         run: uv run ruff check .
 
-#      - name: Run tests
-#        run: uv run pytest
+      - name: Run tests
+        env:
+          DATABASE_URL: "sqlite:///./test.db"
+          JWT_SECRET_KEY: "ci-test-secret-key-not-for-production"
+        run: uv run pytest
