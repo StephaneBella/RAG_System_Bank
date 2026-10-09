@@ -21,3 +21,4 @@ class CurrentUserResponse(BaseModel):
     role: UserRole
     status: UserStatus
     department_id: int
+    department_name: str | None = None

@@ -107,6 +107,8 @@ def test_me_returns_authenticated_user(client):
     assert response.json()["email"] == "auth.test@example.com"
     assert response.json()["role"] == "ADMIN"
     assert response.json()["status"] == "ACTIVE"
+    assert response.json()["department_id"] == 1
+    assert response.json()["department_name"] == "Test Department"
 
 
 def test_logout_revokes_token(client):
