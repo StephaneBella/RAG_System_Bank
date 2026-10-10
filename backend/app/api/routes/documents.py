@@ -44,6 +44,8 @@ SORTABLE_FIELDS = {"id", "title", "created_at", "updated_at"}
 
 
 def _department_map(db: Session) -> dict[str, Department]:
+
+    # Function used to map the department name to a format of the file storage (e.g Direction Generale -> direction_general)
     return {
         sanitize_department_token(department.name): department
         for department in db.scalars(select(Department)).all()
