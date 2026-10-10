@@ -12,7 +12,7 @@ from app.models.user import User
 from app.schemas.auth import CurrentUserResponse, LoginRequest, TokenResponse
 from app.services.auth import authenticate_user
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(prefix="/auth", tags=["Authentication & Session Management"])
 
 
 @router.post("/login", response_model=TokenResponse)

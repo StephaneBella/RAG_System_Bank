@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, AliasPath
 
 from app.models.user import UserRole, UserStatus
 
@@ -21,3 +21,6 @@ class CurrentUserResponse(BaseModel):
     role: UserRole
     status: UserStatus
     department_id: int
+    department_name: str = Field(
+        validation_alias= AliasPath("department", "name")
+    )

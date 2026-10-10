@@ -2,7 +2,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import decode_access_token
 from app.db.session import get_db
@@ -47,7 +47,9 @@ def get_current_user(
             headers=unauthorized,
         )
 
-    user = db.scalar(select(User).where(User.id == user_id))
+    user = db.scalar(select(User)
+                    .options(selectinload(User.department))
+                     .where(User.id == user_id))
     if user is None or user.status != UserStatus.ACTIVE:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -56,3 +58,18 @@ def get_current_user(
         )
 
     return user
+
+def require_permission(
+        permission: str,
+        ROLE_PERMISSIONS: dict[str, set[str]]
+):
+    def checker( current_user: User= Depends(get_current_user)):
+        allowed = ROLE_PERMISSIONS.get(current_user.role, set())
+
+        if permission not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied"
+            )
+        return current_user
+    return checker
