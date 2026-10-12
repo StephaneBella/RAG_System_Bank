@@ -362,7 +362,7 @@ uv run pytest --cov=app   # with coverage
 > **Current state:** the test suite was cleared during the last restructure
 > and is being rebuilt. `pytest` runs green because there are no tests yet —
 > not because everything passes. Every security feature must ship with tests
-> (see section 11, item 8 of the backlog).
+> (backlog §8, summarized in section 11).
 
 Test configuration lives in `pyproject.toml` (`testpaths = ["tests"]`).
 
@@ -406,10 +406,12 @@ On every push and pull request, GitHub Actions runs (in `backend/`):
 ## 11. Sprint 1 — security work
 
 The full backlog is in
-[`docs/Sprint-Backlog.docx`](docs/Sprint-Backlog.docx) (French). The
-security-relevant items, summarized:
+[`docs/Sprint-Backlog.docx`](docs/Sprint-Backlog.docx) (French). The headings
+below use the **backlog section numbers** (§3–§8) so this README and the
+backlog line up. Security concerns that cut across several sections are
+grouped at the end.
 
-### 1. Authentication & sessions (backlog §3)
+### §3 — Authentication & session management (backlog §3)
 
 - Login with email + password; secure password hashing (bcrypt/argon2)
 - JWT issued on login; backend identifies user, role, department from the token
@@ -417,40 +419,28 @@ security-relevant items, summarized:
 - Coherent, non-leaking error responses (invalid credentials, disabled
   account, unauthenticated access)
 
-### 2. Authorization (backlog §4, §5.2)
+### §4 — User management (backlog §4)
 
-- **EMPLOYEE** — search/view documents **only within their own department**,
-  including when they guess another document's ID (403, not 404-leak)
-- **ADMIN** — document CRUD; optional user management (create, disable,
-  change department, reset password)
-- Every endpoint enforces access control **in the backend** — the frontend is
-  not a security boundary
 - Account activation/deactivation controls access
+- ADMIN user management (optional for Sprint 1): create, disable, change
+  department, reset password
 
-### 3. Input validation (backlog §5.3)
+### §5 — Document consultation & management (backlog §5)
 
-- Pydantic schemas for every request body, path and query parameter
-- Pagination/sorting inputs validated and bounded
+**§5.2 EMPLOYEE**
 
-### 4. File & document security (backlog §5.1, §5.3)
+- Search/view documents **only within their own department**, including when
+  they guess another document's ID (403, not 404-leak)
 
-- Upload validation: allowed MIME types, max size, safe filenames
-- Protection against path traversal in `file_path`
-- Secure storage; documents inaccessible across departments
+**§5.3 ADMIN**
 
-### 5. Database security
+- Document CRUD (add / update / delete / archive), department assignment,
+  pagination and sorting
 
-- No SQL injection (SQLAlchemy parameterization; audit raw SQL if any)
-- Least-privilege DB credentials; secrets only in `.env`
-- Migration review: no destructive changes without team agreement
+Every endpoint enforces access control **in the backend** — the frontend is
+not a security boundary.
 
-### 6. Secrets hardening *(gap from last restructure)*
-
-- Re-implement `SecretStr` masking, fail-fast validation (placeholder
-  detection, JWT secret ≥ 32 chars, no localhost DB in staging)
-- Restore the config tests that covered these rules
-
-### 7. Audit & traceability (backlog §6)
+### §6 — Audit & traceability (backlog §6)
 
 The `audit_logs` table exists but **nothing writes to it yet**. Implement
 writers for:
@@ -460,13 +450,31 @@ writers for:
 - admin actions: create / update / delete / archive
 - never log passwords, tokens or secrets
 
-### 8. Tests (backlog §8)
+### §8 — Tests & validation (backlog §8)
 
 - Auth: valid login, wrong credentials, disabled account, expired token
 - Authorization: employee blocked from other departments; employee blocked
   from admin operations
 - Audit: allowed, denied and admin actions are recorded
 - Rebuild the CI pytest step once tests exist
+
+### Cross-cutting security (spans §1–§5)
+
+- **Input validation (backlog §5.3)** — Pydantic schemas for every request
+  body, path and query parameter; pagination/sorting inputs validated and
+  bounded
+- **File & document security (backlog §5.1, §5.3)** — upload validation:
+  allowed MIME types, max size, safe filenames; protection against path
+  traversal in `file_path`; secure storage; documents inaccessible across
+  departments
+- **Database security (backlog §2)** — no SQL injection (SQLAlchemy
+  parameterization; audit raw SQL if any); least-privilege DB credentials;
+  secrets only in `.env`; migration review: no destructive changes without
+  team agreement
+- **Secrets hardening (backlog §1, gap from last restructure)** — re-implement
+  `SecretStr` masking, fail-fast validation (placeholder detection, JWT
+  secret ≥ 32 chars, no localhost DB in staging); restore the config tests
+  that covered these rules
 
 Suggested cycle for each feature:
 **Define → Implement → Test → Document → Validate.**

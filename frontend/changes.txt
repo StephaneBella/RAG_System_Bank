@@ -1,0 +1,14 @@
+Generally the font size is abit too much , also i will prefer a better font family
+Also all your buttons text on them are black which makes them not visible fo make then white instead
+Add loading effects for api calls and stuffs when the page is loading etc 
+1. login page : just general points
+2. Collaborator: normally the only information we should see is the visibility(public,private,confidential etc) and also the last time updated for file this is for the list 
+-no need for the SHA stuffs and preview modal just take me to the view page directly 
+- for the single view page remove the share and download option its a secured something so nothing that gives access to others (even the print option)
+remove also the notion of cryptographie and stuff
+
+3. for the admin i like the idea that he first false on the view page same with the other employees so also same remarks with the employer
+4 . for the admin sidebar i will appreciate if it was fixed bc when i srollon the content section it scrolls the sidebar too, also instead of the #number on the document table put the last time updated , for the stats its the visbility(public,confidential,private) etc so in general classification and visibility are the same for me so take that into consideration everywhere needed
+concerning users we donot have name we only have email you see, also i dont have the possibilit to activate and disactivate a user nor search by user email
+so adjust the sidebar well bc the title on the header is too chooked up
+remove that TLS stuff remmebr the context its an app for a bank so adjust it accordingly
