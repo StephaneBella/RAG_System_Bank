@@ -64,6 +64,7 @@ def logout(
 
     return {"message": "Successfully logged out"}
 
+
 @router.post("/accept-invitation")
 def accept_user_invitation(
     payload: InvitationAccept,
@@ -78,4 +79,3 @@ def accept_user_invitation(
         ) from exc
 
     return {"message": "Invitation accepted successfully"}
-

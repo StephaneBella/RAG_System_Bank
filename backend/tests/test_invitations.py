@@ -201,9 +201,7 @@ def test_employee_cannot_create_invitation(invitation_context):
         },
     )
     assert response.status_code == 200
-    employee_headers = {
-        "Authorization": f"Bearer {response.json()['access_token']}"
-    }
+    employee_headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
 
     invitation_response = client.post(
         "/users/invitations",

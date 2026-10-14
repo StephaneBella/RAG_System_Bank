@@ -60,9 +60,7 @@ def create_invitation(
 def accept_invitation(db: Session, token: str, password: str) -> User:
     token_hash = sha256(token.encode("utf-8")).hexdigest()
     invitation = db.scalar(
-        select(UserInvitation)
-        .where(UserInvitation.token_hash == token_hash)
-        .with_for_update()
+        select(UserInvitation).where(UserInvitation.token_hash == token_hash).with_for_update()
     )
 
     if invitation is None or invitation.used_at is not None:

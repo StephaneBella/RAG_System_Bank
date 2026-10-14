@@ -166,7 +166,8 @@ def test_employee_sees_public_documents_and_own_department_private_documents(env
     assert "secret_report" in titles
     assert "confidential_report" not in titles
     assert {item["department_name"] for item in body["items"]} == {
-        "Front Office", "compliance_lbc_ft"
+        "Front Office",
+        "compliance_lbc_ft",
     }
 
 
@@ -176,7 +177,10 @@ def test_search_respects_scope(env):
     admin = _headers(client, "admin@example.com")
 
     assert client.get("/documents/search_document?q=secret", headers=employee).json()["total"] == 1
-    assert client.get("/documents/search_document?q=confidential", headers=employee).json()["total"] == 0
+    assert (
+        client.get("/documents/search_document?q=confidential", headers=employee).json()["total"]
+        == 0
+    )
     assert client.get("/documents/search_document?q=beta", headers=employee).json()["total"] == 1
     assert client.get("/documents/search_document?q=secret", headers=admin).json()["total"] == 1
 

@@ -104,9 +104,7 @@ def _scoped_documents(db: Session, current_user: User) -> list[StoredDocument]:
     if current_user.role == UserRole.EMPLOYEE:
         mine = sanitize_department_token(current_user.department.name)
         documents = [
-            doc
-            for doc in documents
-            if doc.visibility == "public" or doc.department_token == mine
+            doc for doc in documents if doc.visibility == "public" or doc.department_token == mine
         ]
     return documents
 

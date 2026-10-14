@@ -100,11 +100,7 @@ def get_department(db: Session, department_id: int) -> Department | None:
 
 
 def get_user(db: Session, user_id: int) -> User | None:
-    return db.scalar(
-        select(User)
-        .options(selectinload(User.department))
-        .where(User.id == user_id)
-    )
+    return db.scalar(select(User).options(selectinload(User.department)).where(User.id == user_id))
 
 
 def email_exists(db: Session, email: str, *, exclude_user_id: int | None = None) -> bool:
