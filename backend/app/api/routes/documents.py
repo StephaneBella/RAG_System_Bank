@@ -103,7 +103,11 @@ def _scoped_documents(db: Session, current_user: User) -> list[StoredDocument]:
     documents = load_documents(sync_index_with_folder())
     if current_user.role == UserRole.EMPLOYEE:
         mine = sanitize_department_token(current_user.department.name)
-        documents = [doc for doc in documents if doc.department_token == mine]
+        documents = [
+            doc
+            for doc in documents
+            if doc.visibility == "public" or doc.department_token == mine
+        ]
     return documents
 
 
