@@ -32,9 +32,9 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    user_id: Mapped[int] = mapped_column(
+    user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"),
-        nullable=False,
+        nullable=True,
     )
 
     action: Mapped[str] = mapped_column(
@@ -47,8 +47,8 @@ class AuditLog(Base):
         nullable=False,
     )
 
-    resource_id: Mapped[int] = mapped_column(
-        nullable=False,
+    resource_id: Mapped[int | None] = mapped_column(
+        nullable=True,
     )
 
     result: Mapped[str] = mapped_column(

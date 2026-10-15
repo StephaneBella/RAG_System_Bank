@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -9,6 +9,7 @@ from app.core.security import hash_password
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.audit_log import AuditAction, AuditLog, AuditResult, ResourceType
 from app.models.department import Department
 from app.models.user import User, UserRole, UserStatus
 
@@ -47,11 +48,13 @@ def client():
             yield db
 
     app.dependency_overrides[get_db] = override_get_db
+    app.state.testing_session_factory = TestingSessionLocal
 
     with TestClient(app) as test_client:
         yield test_client
 
     app.dependency_overrides.clear()
+    del app.state.testing_session_factory
     Base.metadata.drop_all(bind=engine)
     engine.dispose()
 
@@ -70,6 +73,29 @@ def test_login_success(client):
     assert response.json()["access_token"]
 
 
+def test_login_success_is_audited(client):
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": "auth.test@example.com",
+            "password": "TestPassword123",
+        },
+    )
+
+    assert response.status_code == 200
+
+    with client.app.state.testing_session_factory() as db:
+        events = db.scalars(select(AuditLog)).all()
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.action == AuditAction.LOGIN.value
+    assert event.resource_type == ResourceType.USER.value
+    assert event.resource_id == 1
+    assert event.result == AuditResult.SUCCESS.value
+    assert event.timestamp is not None
+
+
 def test_login_invalid_password(client):
     response = client.post(
         "/auth/login",
@@ -80,6 +106,44 @@ def test_login_invalid_password(client):
     )
 
     assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid email or password"
+
+    with client.app.state.testing_session_factory() as db:
+        events = db.scalars(
+            select(AuditLog).where(AuditLog.action == AuditAction.LOGIN.value)
+        ).all()
+
+    assert len(events) == 1
+    assert events[0].user_id == 1
+    assert events[0].resource_type == ResourceType.USER.value
+    assert events[0].resource_id == 1
+    assert events[0].result == AuditResult.FAILURE.value
+    assert events[0].timestamp is not None
+
+
+def test_login_unknown_email_is_audited(client):
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": "unknown.user@example.com",
+            "password": "WrongPassword123",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid email or password"
+
+    with client.app.state.testing_session_factory() as db:
+        events = db.scalars(
+            select(AuditLog).where(AuditLog.action == AuditAction.LOGIN.value)
+        ).all()
+
+    assert len(events) == 1
+    assert events[0].user_id is None
+    assert events[0].resource_type == ResourceType.USER.value
+    assert events[0].resource_id is None
+    assert events[0].result == AuditResult.FAILURE.value
+    assert events[0].timestamp is not None
 
 
 def test_me_requires_authentication(client):
@@ -127,3 +191,31 @@ def test_logout_revokes_token(client):
     response = client.get("/auth/me", headers=headers)
 
     assert response.status_code == 401
+
+
+def test_logout_is_audited(client):
+    login = client.post(
+        "/auth/login",
+        json={
+            "email": "auth.test@example.com",
+            "password": "TestPassword123",
+        },
+    )
+    token = login.json()["access_token"]
+
+    response = client.post(
+        "/auth/logout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+
+    with client.app.state.testing_session_factory() as db:
+        events = db.scalars(
+            select(AuditLog).where(AuditLog.action == AuditAction.LOGOUT.value)
+        ).all()
+
+    assert len(events) == 1
+    assert events[0].resource_type == ResourceType.USER.value
+    assert events[0].resource_id == 1
+    assert events[0].result == AuditResult.SUCCESS.value
