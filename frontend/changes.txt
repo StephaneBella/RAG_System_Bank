@@ -1,9 +1,9 @@
 Generally the font size is abit too much , also i will prefer a better font family
 Also all your buttons text on them are black which makes them not visible fo make then white instead
-Add loading effects for api calls and stuffs when the page is loading etc 
+Add loading effects for api calls and stuffs when the page is loading etc
 1. login page : just general points
-2. Collaborator: normally the only information we should see is the visibility(public,private,confidential etc) and also the last time updated for file this is for the list 
--no need for the SHA stuffs and preview modal just take me to the view page directly 
+2. Collaborator: normally the only information we should see is the visibility(public,private,confidential etc) and also the last time updated for file this is for the list
+-no need for the SHA stuffs and preview modal just take me to the view page directly
 - for the single view page remove the share and download option its a secured something so nothing that gives access to others (even the print option)
 remove also the notion of cryptographie and stuff
 

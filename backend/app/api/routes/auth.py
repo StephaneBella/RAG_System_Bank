@@ -10,7 +10,9 @@ from app.db.session import get_db
 from app.models.revoked_token import RevokedToken
 from app.models.user import User
 from app.schemas.auth import CurrentUserResponse, LoginRequest, TokenResponse
+from app.schemas.invitation import InvitationAccept
 from app.services.auth import authenticate_user
+from app.services.invitation_service import accept_invitation
 
 router = APIRouter(prefix="/auth", tags=["Authentication & Session Management"])
 
@@ -35,8 +37,10 @@ def login(
 
 
 @router.get("/me", response_model=CurrentUserResponse)
-def get_me(current_user: User = Depends(get_current_user)) -> User:
-    return current_user
+def get_me(
+    current_user: User = Depends(get_current_user),
+) -> CurrentUserResponse:
+    return CurrentUserResponse.model_validate(current_user)
 
 
 @router.post("/logout")
@@ -59,3 +63,19 @@ def logout(
         db.commit()
 
     return {"message": "Successfully logged out"}
+
+
+@router.post("/accept-invitation")
+def accept_user_invitation(
+    payload: InvitationAccept,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        accept_invitation(db, payload.token, payload.password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return {"message": "Invitation accepted successfully"}

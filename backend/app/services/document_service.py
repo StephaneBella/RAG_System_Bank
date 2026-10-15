@@ -16,7 +16,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 ALLOWED_VISIBILITIES = {"public", "private"}
 INDEX_NAME = ".documents.json"
 
-_DEPARTMENT_UNSAFE_CHARS = "/\\:*?\"<>|"
+_DEPARTMENT_UNSAFE_CHARS = '/\\:*?"<>|'
 
 
 class StoredDocument:
@@ -44,9 +44,9 @@ class StoredDocument:
 
 
 def sanitize_department_token(name: str) -> str:
-    token = "".join(
-        "_" if ch in _DEPARTMENT_UNSAFE_CHARS else ch for ch in name.lower()
-    ).replace(" ", "_")
+    token = "".join("_" if ch in _DEPARTMENT_UNSAFE_CHARS else ch for ch in name.lower()).replace(
+        " ", "_"
+    )
     return token.strip("_")
 
 

@@ -63,7 +63,9 @@ def _to_response(doc: StoredDocument, departments: dict[str, Department]) -> Doc
     )
 
 
-def _apply_sort(items: list[StoredDocument], sort_by: str, order: SortOrder) -> list[StoredDocument]:
+def _apply_sort(
+    items: list[StoredDocument], sort_by: str, order: SortOrder
+) -> list[StoredDocument]:
     if sort_by not in SORTABLE_FIELDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -76,7 +78,9 @@ def _apply_sort(items: list[StoredDocument], sort_by: str, order: SortOrder) -> 
     )
 
 
-def _slice(items: list[StoredDocument], page: int, page_size: int) -> tuple[list[StoredDocument], int, int]:
+def _slice(
+    items: list[StoredDocument], page: int, page_size: int
+) -> tuple[list[StoredDocument], int, int]:
     total = len(items)
     pages = (total + page_size - 1) // page_size if total else 0
     start = (page - 1) * page_size
@@ -99,14 +103,15 @@ def _scoped_documents(db: Session, current_user: User) -> list[StoredDocument]:
     documents = load_documents(sync_index_with_folder())
     if current_user.role == UserRole.EMPLOYEE:
         mine = sanitize_department_token(current_user.department.name)
-        documents = [doc for doc in documents if doc.department_token == mine]
+        documents = [
+            doc for doc in documents if doc.visibility == "public" or doc.department_token == mine
+        ]
     return documents
 
 
 def _name_taken(index: dict, stored_name: str, exclude_id: int | None = None) -> bool:
     return any(
-        doc["file_name"] == stored_name and doc["id"] != exclude_id
-        for doc in index["documents"]
+        doc["file_name"] == stored_name and doc["id"] != exclude_id for doc in index["documents"]
     )
 
 

@@ -52,11 +52,5 @@
     "workerDirectory": [
       "public"
     ]
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "msw"
-    ]
   }
 }

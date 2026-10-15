@@ -74,6 +74,7 @@ def env(tmp_path, monkeypatch):
         "public__front_office__alpha_report.pdf",
         "private__front_office__beta_notes.pdf",
         "public__compliance_lbc_ft__secret_report.pdf",
+        "private__compliance_lbc_ft__confidential_report.pdf",
     ):
         (documents_dir / file_name).write_bytes(b"%PDF-1.4 test")
 
@@ -114,7 +115,7 @@ def test_seeded_folder_auto_indexed(env):
     headers = _headers(client, "admin@example.com")
     body = client.get("/documents/get_all", headers=headers).json()
 
-    assert body["total"] == 3
+    assert body["total"] == 4
     ids = [item["id"] for item in body["items"]]
     assert len(ids) == len(set(ids))
     assert (env["documents_dir"] / ".documents.json").exists()
@@ -125,7 +126,7 @@ def test_admin_pagination_metadata(env):
     headers = _headers(client, "admin@example.com")
 
     page_one = client.get("/documents/get_all?page=1&page_size=2", headers=headers).json()
-    assert page_one["total"] == 3
+    assert page_one["total"] == 4
     assert page_one["pages"] == 2
     assert page_one["page_size"] == 2
     assert len(page_one["items"]) == 2
@@ -133,7 +134,7 @@ def test_admin_pagination_metadata(env):
     assert page_one["has_prev"] is False
 
     page_two = client.get("/documents/get_all?page=2&page_size=2", headers=headers).json()
-    assert len(page_two["items"]) == 1
+    assert len(page_two["items"]) == 2
     assert page_two["has_next"] is False
     assert page_two["has_prev"] is True
 
@@ -153,17 +154,21 @@ def test_invalid_sort_field_rejected(env):
     assert client.get("/documents/get_all?sort_by=content", headers=headers).status_code == 400
 
 
-def test_employee_sees_only_own_department(env):
+def test_employee_sees_public_documents_and_own_department_private_documents(env):
     client = env["client"]
     headers = _headers(client, "employee@example.com")
     body = client.get("/documents/get_all", headers=headers).json()
 
-    assert body["total"] == 2
+    assert body["total"] == 3
     titles = {item["title"] for item in body["items"]}
     assert "alpha_report" in titles
     assert "beta_notes" in titles
-    assert "secret_report" not in titles
-    assert {item["department_name"] for item in body["items"]} == {"Front Office"}
+    assert "secret_report" in titles
+    assert "confidential_report" not in titles
+    assert {item["department_name"] for item in body["items"]} == {
+        "Front Office",
+        "compliance_lbc_ft",
+    }
 
 
 def test_search_respects_scope(env):
@@ -171,7 +176,11 @@ def test_search_respects_scope(env):
     employee = _headers(client, "employee@example.com")
     admin = _headers(client, "admin@example.com")
 
-    assert client.get("/documents/search_document?q=secret", headers=employee).json()["total"] == 0
+    assert client.get("/documents/search_document?q=secret", headers=employee).json()["total"] == 1
+    assert (
+        client.get("/documents/search_document?q=confidential", headers=employee).json()["total"]
+        == 0
+    )
     assert client.get("/documents/search_document?q=beta", headers=employee).json()["total"] == 1
     assert client.get("/documents/search_document?q=secret", headers=admin).json()["total"] == 1
 
@@ -307,7 +316,7 @@ def test_delete_removes_file_and_entry(env):
     assert response.status_code == 200
     assert response.json() == {"detail": "Document deleted successfully"}
     assert not (env["documents_dir"] / "private__front_office__beta_notes.pdf").exists()
-    assert client.get("/documents/get_all", headers=headers).json()["total"] == 2
+    assert client.get("/documents/get_all", headers=headers).json()["total"] == 3
 
     repeat = client.delete(f"/documents/delete/{document_id}", headers=headers)
     assert repeat.status_code == 404
