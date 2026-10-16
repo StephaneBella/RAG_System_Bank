@@ -1,12 +1,13 @@
 # RAG Project — Secure Document Library
 
 A web application where authenticated users browse and search a document corpus
-strictly filtered by their business layer (Front Office, Credit & Risks,
-Compliance/LBC-FT, Management). Every access is audited.
+strictly filtered by their business layer (Direction Générale, Conformité &
+Risques, Direction Juridique, Finances & Comptabilité, Ressources Humaines).
+Every access is audited.
 
 The long-term goal is a RAG chatbot over bank documents. The current increment
 delivers the secure foundation first: a role-filtered document library with
-simple full-text search (no LLM/RAG generation yet).
+search (no LLM/RAG generation yet).
 
 **This README is the onboarding guide for the security team.** It explains how
 to set up the project, how to use Alembic migrations for testing, what the
@@ -26,7 +27,7 @@ security-relevant backlog items are, and where to start.
 | Audit logging (writers + list/export API) | ✅ Done |
 | Backend test suite | ✅ Done (`uv run pytest`) |
 | Frontend (React + Vite + TypeScript) | ✅ Done (integrated against the real API) |
-| CI (Ruff + ESLint + pytest + build) | ✅ Done |
+| CI (Ruff + pytest + frontend lint/typecheck/test/build) | ✅ Done |
 
 Full backlog: [`docs/Sprint-Backlog.docx`](docs/Sprint-Backlog.docx) (French).
 
@@ -34,9 +35,12 @@ Full backlog: [`docs/Sprint-Backlog.docx`](docs/Sprint-Backlog.docx) (French).
 
 - **Backend:** FastAPI (Python 3.11+), SQLAlchemy 2.0, Alembic, PostgreSQL
 - **Config:** `pydantic-settings` + `backend/.env`
-- **Frontend:** React + Vite + TypeScript (integrated against the real backend API)
-- **Search:** In-file index search over stored documents
-- **CI:** GitHub Actions — Ruff + ESLint + pytest + frontend build
+- **Frontend:** React 18 + Vite + TypeScript + Tailwind, managed with `pnpm`
+  (integrated against the real backend API)
+- **Search:** Backend search endpoint over a file-based document index; the
+  library UI currently filters by document title on the client
+- **CI:** GitHub Actions — Ruff + pytest (backend) and pnpm
+  lint/typecheck/test/build (frontend)
 - **Tooling:** `uv` (dependency management), `ruff` (format/lint), `pytest`
 
 ---
@@ -48,17 +52,17 @@ project-root/
 │
 ├── backend/                    # FastAPI backend
 │   ├── app/
-│   │   ├── core/               # Configuration & settings (config.py)
-│   │   ├── db/                 # SQLAlchemy Base (base.py)
-│   │   ├── models/             # SQLAlchemy models (user, department,
-│   │   │                       #   document, audit_log)
-│   │   ├── schemas/            # Pydantic API schemas (empty, to be built)
-│   │   ├── api/                # API routes (router.py empty, to be built)
-│   │   │   └── routes/
-│   │   ├── services/           # Business logic (empty, to be built)
+│   │   ├── core/               # Configuration & settings, security helpers
+│   │   ├── db/                 # SQLAlchemy Base, session, startup seeding
+│   │   ├── models/             # SQLAlchemy models (user, department, audit_log,
+│   │   │                       #   user_invitation, revoked_token)
+│   │   ├── schemas/            # Pydantic API schemas
+│   │   ├── api/                # API routes
+│   │   │   └── routes/         # auth, documents, users, departments, audit
+│   │   ├── services/           # Business logic (audit, documents, invitations…)
 │   │   └── main.py             # FastAPI app entry point
 │   │
-│   ├── tests/                  # Backend tests (empty, being rebuilt)
+│   ├── tests/                  # Backend tests (auth, documents, users, audit)
 │   ├── alembic/                # Database migrations
 │   │   └── versions/           # Migration revision files
 │   ├── alembic.ini             # Alembic config
@@ -67,16 +71,25 @@ project-root/
 │   ├── pyproject.toml          # Dependencies + ruff/pytest config
 │   └── uv.lock
 │
-├── frontend/                   # Frontend app (planned — currently empty)
+├── frontend/                   # React + Vite + TypeScript app (pnpm)
+│   ├── src/
+│   │   ├── api/                # Axios client, endpoints, query keys, types
+│   │   ├── components/         # UI, document and user components
+│   │   ├── hooks/              # React Query hooks
+│   │   ├── i18n/               # Internationalization (FR default, EN)
+│   │   ├── pages/              # Route pages (library, admin, auth)
+│   │   └── main.tsx
+│   └── package.json
 │
 ├── data/
-│   └── documents/              # Development/sample documents
+│   ├── documents/              # Development/sample documents + file index
+│   └── archive/                # Superseded files (gitignored)
 │
 ├── docs/                       # Project documentation
 │   ├── Sprint-Backlog.docx     # Sprint backlog (French)
 │   └── Gouvernance du code.docx  # Code governance charter (French)
 │
-├── .github/workflows/ci.yml    # CI configuration
+├── .github/workflows/ci.yml    # CI configuration (backend + frontend)
 ├── .gitignore
 └── README.md
 ```
@@ -91,7 +104,7 @@ Before starting, install:
 - Python 3.11+ (local venv runs 3.13; CI uses 3.12)
 - [`uv`](https://docs.astral.sh/uv/)
 - PostgreSQL
-- Node.js + npm *(only when the frontend work starts)*
+- Node.js 20+ and [`pnpm`](https://pnpm.io/) (frontend)
 
 Check your installations:
 
@@ -100,6 +113,8 @@ git --version
 python --version
 uv --version
 psql --version
+node --version
+pnpm --version
 ```
 
 ---
@@ -151,15 +166,22 @@ JWT_SECRET_KEY=replace-with-a-generated-secret
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 
 CORS_ORIGINS=["http://localhost:5173"]
+
+# Optional: create the seed departments + an admin user on startup
+SEED_ON_STARTUP=false
+SEED_ADMIN_EMAIL=admin@banque.fr
+SEED_ADMIN_PASSWORD=
 ```
 
 | Variable | Purpose |
 |---|---|
 | `APP_ENV` | Environment name (`dev`, `staging`, `production`) |
 | `DATABASE_URL` | SQLAlchemy URL — `postgresql+psycopg://user:pass@host:5432/db` |
-| `JWT_SECRET_KEY` | Signing key for JWTs (auth not implemented yet) |
+| `JWT_SECRET_KEY` | Signing key for JWTs |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token lifetime (default 60) |
 | `CORS_ORIGINS` | JSON list of allowed frontend origins |
+| `SEED_ON_STARTUP` | When `true`, seed departments + admin on startup (default `false`) |
+| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Admin credentials for the seeder (no admin is created unless the password is set) |
 
 Generate a strong JWT secret:
 
@@ -169,8 +191,8 @@ uv run python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 Settings are loaded by `backend/app/core/config.py` via `pydantic-settings`.
 `DATABASE_URL` and `JWT_SECRET_KEY` are **required** — anything that loads
-`settings` (e.g. Alembic, and later the auth code) raises `ValidationError` if
-`.env` is missing or incomplete.
+`settings` (Alembic, the API) raises `ValidationError` if `.env` is missing or
+incomplete.
 
 ### Secrets rules
 
@@ -230,10 +252,10 @@ backend/.env  →  app/core/config.py (Settings)  →  alembic/env.py
   — that is intentional. `alembic/env.py` reads `settings.database_url` from
   your `.env` and injects it. **Migrations always run against the database in
   your `.env`.** Double-check that file before running anything destructive.
-- `env.py` explicitly imports all four models (`User`, `Department`,
-  `Document`, `AuditLog`) so autogenerate sees them. **If you add a new model
-  file, you must import it in `backend/alembic/env.py`** or autogenerate will
-  silently ignore it.
+- `env.py` does `import app.models`, which pulls in every model through
+  `app/models/__init__.py`, so autogenerate sees them. **If you add a new model
+  file, you must export it in `backend/app/models/__init__.py`** or
+  autogenerate will silently ignore it.
 
 ### 7.2 First migration (fresh setup)
 
@@ -253,16 +275,19 @@ Expected tables:
 
 ```text
 departments
-documents
 users
 audit_logs
+user_invitations
+revoked_tokens
 ```
+
+> Documents are **not** stored in the database — they live as files under
+> `data/documents/` with a `.documents.json` index (see section 12).
 
 Inspect a table:
 
 ```sql
 \d users
-\d documents
 \d audit_logs
 ```
 
@@ -281,8 +306,8 @@ All commands run from `backend/`.
 
 ### 7.4 Changing the schema (migration workflow)
 
-1. **Edit the SQLAlchemy model**, e.g. `backend/app/models/document.py`.
-   New model file? Add the import to `backend/alembic/env.py` too.
+1. **Edit the SQLAlchemy model**, e.g. `backend/app/models/audit_log.py`.
+   New model file? Export it in `backend/app/models/__init__.py` too.
 2. **Generate the migration:**
 
    ```bash
@@ -334,7 +359,9 @@ Notes:
 
 ---
 
-## 8. Running the backend
+## 8. Running the app
+
+### 8.1 Backend
 
 From `backend/`:
 
@@ -347,7 +374,43 @@ uv run uvicorn app.main:app --reload
 | `http://localhost:8000/docs` | Swagger UI (OpenAPI) |
 | `http://localhost:8000/health` | Health check → `{"status": "ok"}` |
 
-That is currently the **only** endpoint — the API surface is sprint work.
+Authenticated routes take `Authorization: Bearer <token>`. The main surface:
+
+| Method & path | Purpose |
+|---|---|
+| `POST /auth/login` | Exchange email + password for a JWT |
+| `GET /auth/me` | Current user profile |
+| `POST /auth/logout` | Revoke the current token |
+| `POST /auth/accept-invitation` | Set a password from an invitation token |
+| `GET /documents/get_all` | List accessible documents (paged, sorted) |
+| `GET /documents/{id}` | Document metadata (department-scoped) |
+| `GET /documents/{id}/content` | Inline document file (PDF/DOCX) |
+| `POST /documents/add` | Create a document (ADMIN) |
+| `PUT /documents/update/{id}` | Update a document (ADMIN) |
+| `DELETE /documents/delete/{id}` | Delete a document (ADMIN) |
+| `GET /documents/search_document` | Search documents by text (paged) |
+| `GET /users` | List users (ADMIN) |
+| `PATCH /users/{id}` | Update a user (ADMIN) |
+| `POST /users/{id}/status` | Activate/deactivate a user (ADMIN) |
+| `POST /users/invitations` | Invite a user (ADMIN) |
+| `GET /departments` | List departments |
+| `GET /audit` | Query the audit log (ADMIN, paged + filtered) |
+| `GET /audit/export` | Export the audit log as CSV (ADMIN) |
+
+### 8.2 Frontend
+
+From `frontend/`:
+
+```bash
+pnpm install
+pnpm dev        # http://localhost:5173
+```
+
+Point the app at the backend with `VITE_API_BASE_URL` in `frontend/.env`
+(defaults to `http://localhost:8000`). The frontend talks to the real API —
+there are no in-browser mocks.
+
+Other scripts: `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`.
 
 ---
 
@@ -361,10 +424,12 @@ uv run pytest -v          # verbose
 uv run pytest --cov=app   # with coverage
 ```
 
-> **Current state:** the test suite was cleared during the last restructure
-> and is being rebuilt. `pytest` runs green because there are no tests yet —
-> not because everything passes. Every security feature must ship with tests
-> (backlog §8, summarized in section 11).
+> **Current state:** the suite covers authentication, authorization (role +
+> department scoping), documents (CRUD, content, filename parsing), users and
+> invitations, and audit logging. Tests use an isolated database and a temporary
+> documents directory, so they never touch your dev data.
+
+Frontend tests run with `pnpm test` (Vitest).
 
 Test configuration lives in `pyproject.toml` (`testpaths = ["tests"]`).
 
@@ -395,13 +460,22 @@ uv run pytest
 
 ### CI (`.github/workflows/ci.yml`)
 
-On every push and pull request, GitHub Actions runs (in `backend/`):
+On every push and pull request, GitHub Actions runs two jobs.
+
+**Backend** (working directory `backend/`):
 
 1. `uv sync`
 2. `uv run ruff format --check .`
 3. `uv run ruff check .`
-4. ~~`uv run pytest`~~ — **currently commented out**; re-enable it once the
-   test suite is rebuilt.
+4. `uv run pytest`
+
+**Frontend** (working directory `frontend/`):
+
+1. `pnpm install --frozen-lockfile`
+2. `pnpm lint`
+3. `pnpm typecheck`
+4. `pnpm test`
+5. `pnpm build`
 
 ---
 
@@ -413,70 +487,67 @@ below use the **backlog section numbers** (§3–§8) so this README and the
 backlog line up. Security concerns that cut across several sections are
 grouped at the end.
 
-### §3 — Authentication & session management (backlog §3)
+### §3 — Authentication & session management (backlog §3) — ✅ implemented
 
-- Login with email + password; secure password hashing (bcrypt/argon2)
-- JWT issued on login; backend identifies user, role, department from the token
-- Token expiration and session invalidation; expired/invalid tokens rejected
-- Coherent, non-leaking error responses (invalid credentials, disabled
-  account, unauthenticated access)
+- Login with email + password; passwords hashed with Argon2 (via `pwdlib`)
+- JWT issued on login; the backend resolves user, role and department from the token
+- Token expiration + revocation on logout, backed by the `revoked_tokens` table
+- Coherent, non-leaking errors for invalid, expired, revoked and unauthenticated
+  access
 
-### §4 — User management (backlog §4)
+### §4 — User management (backlog §4) — ✅ implemented
 
-- Account activation/deactivation controls access
-- ADMIN user management (optional for Sprint 1): create, disable, change
-  department, reset password
+- Account activation/deactivation (`ACTIVE`/`INACTIVE`) controls access
+- ADMIN user management: list, update role/department, enable/disable
+- Invitation flow: an ADMIN invites an email; the user accepts and sets a
+  password (`user_invitations`)
 
-### §5 — Document consultation & management (backlog §5)
+### §5 — Document consultation & management (backlog §5) — ✅ implemented
 
 **§5.2 EMPLOYEE**
 
-- Search/view documents **only within their own department**, including when
-  they guess another document's ID (403, not 404-leak)
+- Search/view documents **only within their own department** (plus `public`
+  documents), including 403 (not a 404-leak) when guessing another document's ID
 
 **§5.3 ADMIN**
 
-- Document CRUD (add / update / delete / archive), department assignment,
+- Document CRUD (add / update / delete), department + visibility assignment,
   pagination and sorting
 
 Every endpoint enforces access control **in the backend** — the frontend is
 not a security boundary.
 
-### §6 — Audit & traceability (backlog §6)
+### §6 — Audit & traceability (backlog §6) — ✅ implemented
 
-The `audit_logs` table exists but **nothing writes to it yet**. Implement
-writers for:
+Audit events are written on authentication, user management, document access
+(including **denied** cross-department attempts) and admin actions, then exposed
+through `GET /audit` and `GET /audit/export`. Passwords, tokens and secrets are
+never logged.
 
-- successful/failed logins, logouts, session expirations
-- document views — **especially denied cross-department attempts**
-- admin actions: create / update / delete / archive
-- never log passwords, tokens or secrets
+### §8 — Tests & validation (backlog §8) — ✅ implemented
 
-### §8 — Tests & validation (backlog §8)
-
-- Auth: valid login, wrong credentials, disabled account, expired token
-- Authorization: employee blocked from other departments; employee blocked
-  from admin operations
-- Audit: allowed, denied and admin actions are recorded
-- Rebuild the CI pytest step once tests exist
+- Backend suite covers auth, authorization, documents, users/invitations and audit
+- CI runs the backend suite plus frontend lint/typecheck/test/build
 
 ### Cross-cutting security (spans §1–§5)
 
-- **Input validation (backlog §5.3)** — Pydantic schemas for every request
-  body, path and query parameter; pagination/sorting inputs validated and
-  bounded
-- **File & document security (backlog §5.1, §5.3)** — upload validation:
-  allowed MIME types, max size, safe filenames; protection against path
-  traversal in `file_path`; secure storage; documents inaccessible across
-  departments
-- **Database security (backlog §2)** — no SQL injection (SQLAlchemy
-  parameterization; audit raw SQL if any); least-privilege DB credentials;
-  secrets only in `.env`; migration review: no destructive changes without
-  team agreement
-- **Secrets hardening (backlog §1, gap from last restructure)** — re-implement
-  `SecretStr` masking, fail-fast validation (placeholder detection, JWT
-  secret ≥ 32 chars, no localhost DB in staging); restore the config tests
-  that covered these rules
+- **Input validation (backlog §5.3)** — ✅ Pydantic schemas for every request
+  body, path and query parameter; pagination/sorting validated and bounded
+- **File & document security (backlog §5.1, §5.3)** — ✅ upload validation
+  (`.pdf`/`.docx` only, size limit, sanitized names), path-traversal protection,
+  storage outside the database, department scoping on every read
+- **Database security (backlog §2)** — SQLAlchemy parameterization (no raw SQL);
+  least-privilege DB credentials; secrets only in `.env`; migration review: no
+  destructive changes without team agreement
+- **Secrets hardening (backlog §1)** — still open: `SecretStr` masking,
+  fail-fast validation (placeholder detection, JWT secret ≥ 32 chars, no
+  localhost DB in staging) and the config tests that cover these rules
+
+### Still open
+
+- Secrets hardening (above)
+- Richer document metadata (source, type, date, classification, version,
+  checksum) and true full-text / RAG search
 
 Suggested cycle for each feature:
 **Define → Implement → Test → Document → Validate.**
@@ -490,22 +561,31 @@ Department
     │
     ├──< User
     │      │
-    │      └──< AuditLog
+    │      ├──< AuditLog
+    │      └──< UserInvitation
     │
-    └──< Document
+    └── (documents are file-based, not rows)
 ```
 
 | Table | Columns (current) |
 |---|---|
 | `departments` | `id`, `name` (unique) |
 | `users` | `id`, `email` (unique), `password_hash`, `status` (`ACTIVE`/`INACTIVE`), `role` (`ADMIN`/`EMPLOYEE`), `department_id` → departments |
-| `documents` | `id`, `title`, `department_id` → departments, `file_path`, `created_at`, `updated_at` |
 | `audit_logs` | `id`, `user_id` → users, `action`, `resource_type`, `resource_id`, `result`, `timestamp`, `ip_address` |
+| `user_invitations` | `id`, `user_id` → users, `token_hash` (unique), `created_at`, `expires_at`, `used_at` |
+| `revoked_tokens` | `jti` (PK), `expires_at` |
 
-Defined but not yet enforced in columns: `AuditAction`, `ResourceType`,
-`AuditResult` enums in `app/models/audit_log.py` (values currently stored as
-plain strings). The backlog also requires richer `Document` metadata (source,
-type, date, classification, version, checksum) — expect model + migration work.
+Documents are **not** stored in the database. Each file lives under
+`data/documents/` with a `.documents.json` index; the title, visibility and
+department are parsed from the filename using the convention
+`{visibility}__{department_token}__{title}.{ext}` (e.g.
+`public__direction_générale__Rapport_annuel_COBAC_2024.pdf`). Expect future work
+to move documents into the database with richer metadata.
+
+Audit `action`/`resource_type`/`result` values come from the `AuditAction`,
+`ResourceType` and `AuditResult` enums in `app/models/audit_log.py` (stored as
+plain strings). The backlog also calls for richer document metadata (source,
+type, date, classification, version, checksum).
 
 ---
 
@@ -514,13 +594,13 @@ type, date, classification, version, checksum) — expect model + migration work
 ```text
 User
  ├── Role   (ADMIN | EMPLOYEE)
- └── Department  (Front Office, Credit & Risks, Compliance/LBC-FT, Management)
+ └── Department  (Direction Générale, Conformité & Risques, Direction Juridique,
+                  Finances & Comptabilité, Ressources Humaines)
 ```
 
 - **EMPLOYEE:** authenticate, search documents, view documents — own department
-  only.
-- **ADMIN:** everything an employee can do, plus manage documents (and
-  optionally users).
+  (plus `public` documents) only.
+- **ADMIN:** everything an employee can do, plus manage documents and users.
 
 Rules must be enforced by the backend on every endpoint. The frontend must
 **never** be treated as a security boundary.
@@ -547,7 +627,7 @@ git push -u origin feature/<your-feature>
 ```
 
 Commit prefix convention used in this repo: `feat:`, `fix:`, `chore:`, `test:`,
-`docs:`.
+`docs:` — optionally scoped, e.g. `feat(documents): ...` or `fix(audit): ...`.
 
 Before pushing:
 
@@ -581,7 +661,7 @@ uv run alembic check
 ```text
 1. Clone repository
         ↓
-2. Install prerequisites (uv, PostgreSQL)
+2. Install prerequisites (uv, PostgreSQL, Node + pnpm)
         ↓
 3. cp .env.example .env  →  set DATABASE_URL + JWT_SECRET_KEY
         ↓
@@ -589,20 +669,22 @@ uv run alembic check
         ↓
 5. uv run alembic upgrade head   (verify with \dt)
         ↓
-6. uv run uvicorn app.main:app --reload   (check /health)
+6. uv run uvicorn app.main:app --reload   (check /health, /docs)
         ↓
-7. Read docs/Sprint-Backlog.docx + docs/Gouvernance du code.docx
+7. cd frontend && pnpm install && pnpm dev
         ↓
-8. Create your security/* branch
+8. Read docs/Sprint-Backlog.docx + docs/Gouvernance du code.docx
         ↓
-9. Start with: authentication → authorization → audit → tests
+9. Create your security/* branch
+        ↓
+10. Start with: secrets hardening → richer document metadata → RAG search
 ```
 
 Reading order for security work:
 
 ```text
-README → app/models/ → app/core/config.py → backlog §3 (auth)
-      → backlog §4/§5 (authorization) → backlog §6 (audit) → tests
+README → app/models/ → app/api/routes/ → app/services/ → tests
+      → docs/Sprint-Backlog.docx (remaining: secrets hardening, RAG search)
 ```
 
 ---
