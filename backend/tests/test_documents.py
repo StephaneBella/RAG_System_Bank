@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -31,9 +30,7 @@ def document_context(tmp_path, monkeypatch):
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    TestingSessionLocal = sessionmaker(
-        bind=engine, autoflush=False, autocommit=False
-    )
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     Base.metadata.create_all(bind=engine)
 
     with TestingSessionLocal() as db:
@@ -124,9 +121,7 @@ def document_context(tmp_path, monkeypatch):
 
 def _document_ids(env):
     client = env["client"]
-    body = client.get(
-        "/documents/get_all", headers=env["headers"]("admin")
-    ).json()
+    body = client.get("/documents/get_all", headers=env["headers"]("admin")).json()
     return {item["title"]: item["id"] for item in body["items"]}
 
 
@@ -142,9 +137,7 @@ def _audit_event(env, action, user_id=None, resource_id=None):
 
 def test_seeded_folder_is_indexed_and_ids_are_unique(document_context):
     env = document_context
-    response = env["client"].get(
-        "/documents/get_all", headers=env["headers"]("admin")
-    )
+    response = env["client"].get("/documents/get_all", headers=env["headers"]("admin"))
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 4
@@ -156,9 +149,7 @@ def test_seeded_folder_is_indexed_and_ids_are_unique(document_context):
 def test_admin_pagination_metadata(document_context):
     env = document_context
     headers = env["headers"]("admin")
-    page_one = env["client"].get(
-        "/documents/get_all?page=1&page_size=2", headers=headers
-    ).json()
+    page_one = env["client"].get("/documents/get_all?page=1&page_size=2", headers=headers).json()
     assert page_one["total"] == 4
     assert page_one["pages"] == 2
     assert page_one["page_size"] == 2
@@ -166,9 +157,7 @@ def test_admin_pagination_metadata(document_context):
     assert page_one["has_next"] is True
     assert page_one["has_prev"] is False
 
-    page_two = env["client"].get(
-        "/documents/get_all?page=2&page_size=2", headers=headers
-    ).json()
+    page_two = env["client"].get("/documents/get_all?page=2&page_size=2", headers=headers).json()
     assert len(page_two["items"]) == 2
     assert page_two["has_next"] is False
     assert page_two["has_prev"] is True
@@ -177,42 +166,36 @@ def test_admin_pagination_metadata(document_context):
 def test_invalid_pagination_and_sort_are_rejected(document_context):
     env = document_context
     headers = env["headers"]("admin")
-    assert env["client"].get(
-        "/documents/get_all?page_size=101", headers=headers
-    ).status_code == 422
-    assert env["client"].get(
-        "/documents/get_all?page=0", headers=headers
-    ).status_code == 422
-    assert env["client"].get(
-        "/documents/get_all?sort_by=content", headers=headers
-    ).status_code == 400
+    assert env["client"].get("/documents/get_all?page_size=101", headers=headers).status_code == 422
+    assert env["client"].get("/documents/get_all?page=0", headers=headers).status_code == 422
+    assert (
+        env["client"].get("/documents/get_all?sort_by=content", headers=headers).status_code == 400
+    )
 
 
 def test_employee_sees_public_and_own_department_private_documents(document_context):
     env = document_context
-    response = env["client"].get(
-        "/documents/get_all", headers=env["headers"]("employee_a")
-    )
+    response = env["client"].get("/documents/get_all", headers=env["headers"]("employee_a"))
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 3
     titles = {item["title"] for item in body["items"]}
-    assert "alpha_report" in titles
-    assert "beta_notes" in titles
-    assert "secret_report" in titles
-    assert "confidential_report" not in titles
+    assert "Alpha Report" in titles
+    assert "Beta Notes" in titles
+    assert "Secret Report" in titles
+    assert "Confidential Report" not in titles
 
 
 def test_employee_cannot_view_private_document_from_another_department(document_context):
     env = document_context
-    document_id = _document_ids(env)["confidential_report"]
-    response = env["client"].get(
-        f"/documents/{document_id}", headers=env["headers"]("employee_a")
-    )
+    document_id = _document_ids(env)["Confidential Report"]
+    response = env["client"].get(f"/documents/{document_id}", headers=env["headers"]("employee_a"))
     assert response.status_code == 403
     event = _audit_event(
-        env, AuditAction.DOCUMENT_VIEW,
-        user_id=env["ids"]["employee_a"], resource_id=document_id,
+        env,
+        AuditAction.DOCUMENT_VIEW,
+        user_id=env["ids"]["employee_a"],
+        resource_id=document_id,
     )
     assert event is not None
     assert event.result == AuditResult.FAILURE.value
@@ -223,24 +206,24 @@ def test_search_respects_visibility_and_department_scope_and_is_audited(document
     employee = env["headers"]("employee_a")
     admin = env["headers"]("admin")
 
-    response = env["client"].get(
-        "/documents/search_document?q=secret", headers=employee
-    )
+    response = env["client"].get("/documents/search_document?q=secret", headers=employee)
     assert response.status_code == 200
     assert response.json()["total"] == 1
-    assert env["client"].get(
-        "/documents/search_document?q=confidential", headers=employee
-    ).json()["total"] == 0
-    assert env["client"].get(
-        "/documents/search_document?q=beta", headers=employee
-    ).json()["total"] == 1
-    assert env["client"].get(
-        "/documents/search_document?q=secret", headers=admin
-    ).json()["total"] == 1
-
-    event = _audit_event(
-        env, AuditAction.DOCUMENT_SEARCH, user_id=env["ids"]["employee_a"]
+    assert (
+        env["client"]
+        .get("/documents/search_document?q=confidential", headers=employee)
+        .json()["total"]
+        == 0
     )
+    assert (
+        env["client"].get("/documents/search_document?q=beta", headers=employee).json()["total"]
+        == 1
+    )
+    assert (
+        env["client"].get("/documents/search_document?q=secret", headers=admin).json()["total"] == 1
+    )
+
+    event = _audit_event(env, AuditAction.DOCUMENT_SEARCH, user_id=env["ids"]["employee_a"])
     assert event is not None
     assert event.result == AuditResult.SUCCESS.value
 
@@ -259,14 +242,12 @@ def test_admin_can_upload_document_and_upload_is_audited(document_context):
     )
     assert response.status_code == 201
     body = response.json()
-    assert body["title"] == "new_contract"
+    assert body["title"] == "New Contract"
     assert body["department_name"] == "Front Office"
     stored_name = Path(body["file_path"]).name
     assert (env["documents_dir"] / stored_name).exists()
 
-    event = _audit_event(
-        env, AuditAction.DOCUMENT_CREATE, resource_id=body["id"]
-    )
+    event = _audit_event(env, AuditAction.DOCUMENT_CREATE, resource_id=body["id"])
     assert event is not None
     assert event.result == AuditResult.SUCCESS.value
 
@@ -304,7 +285,7 @@ def test_employee_cannot_create_update_or_delete_documents(document_context):
     )
     assert create_response.status_code == 403
 
-    document_id = _document_ids(env)["alpha_report"]
+    document_id = _document_ids(env)["Alpha Report"]
     update_response = env["client"].put(
         f"/documents/update/{document_id}",
         data={
@@ -315,21 +296,21 @@ def test_employee_cannot_create_update_or_delete_documents(document_context):
         files={"file": ("updated.pdf", b"%PDF-1.4 test", "application/pdf")},
         headers=headers,
     )
-    delete_response = env["client"].delete(
-        f"/documents/delete/{document_id}", headers=headers
-    )
+    delete_response = env["client"].delete(f"/documents/delete/{document_id}", headers=headers)
     assert update_response.status_code == 403
     assert delete_response.status_code == 403
 
-    create_event = _audit_event(
-        env, AuditAction.DOCUMENT_CREATE, user_id=env["ids"]["employee_a"]
-    )
+    create_event = _audit_event(env, AuditAction.DOCUMENT_CREATE, user_id=env["ids"]["employee_a"])
     update_event = _audit_event(
-        env, AuditAction.DOCUMENT_UPDATE, user_id=env["ids"]["employee_a"],
+        env,
+        AuditAction.DOCUMENT_UPDATE,
+        user_id=env["ids"]["employee_a"],
         resource_id=document_id,
     )
     delete_event = _audit_event(
-        env, AuditAction.DOCUMENT_DELETE, user_id=env["ids"]["employee_a"],
+        env,
+        AuditAction.DOCUMENT_DELETE,
+        user_id=env["ids"]["employee_a"],
         resource_id=document_id,
     )
     assert create_event is not None and create_event.result == AuditResult.FAILURE.value
@@ -354,7 +335,7 @@ def test_upload_rejects_unsupported_extension(document_context):
 
 def test_update_archives_old_file_and_preserves_document_id(document_context):
     env = document_context
-    document_id = _document_ids(env)["alpha_report"]
+    document_id = _document_ids(env)["Alpha Report"]
     response = env["client"].put(
         f"/documents/update/{document_id}",
         data={
@@ -368,14 +349,12 @@ def test_update_archives_old_file_and_preserves_document_id(document_context):
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == document_id
-    assert body["title"] == "renamed_report"
+    assert body["title"] == "Renamed Report"
     assert (env["archive_dir"] / "public__front_office__alpha_report.pdf").exists()
     assert not (env["documents_dir"] / "public__front_office__alpha_report.pdf").exists()
     assert (env["documents_dir"] / "public__front_office__renamed_report.pdf").exists()
 
-    event = _audit_event(
-        env, AuditAction.DOCUMENT_UPDATE, resource_id=document_id
-    )
+    event = _audit_event(env, AuditAction.DOCUMENT_UPDATE, resource_id=document_id)
     assert event is not None
     assert event.result == AuditResult.SUCCESS.value
 
@@ -393,45 +372,91 @@ def test_update_missing_document_returns_404_and_is_audited(document_context):
         headers=env["headers"]("admin"),
     )
     assert response.status_code == 404
-    event = _audit_event(
-        env, AuditAction.DOCUMENT_UPDATE, resource_id=9999
-    )
+    event = _audit_event(env, AuditAction.DOCUMENT_UPDATE, resource_id=9999)
     assert event is not None
     assert event.result == AuditResult.FAILURE.value
 
 
 def test_delete_removes_file_and_index_entry_and_is_audited(document_context):
     env = document_context
-    document_id = _document_ids(env)["beta_notes"]
+    document_id = _document_ids(env)["Beta Notes"]
     response = env["client"].delete(
         f"/documents/delete/{document_id}", headers=env["headers"]("admin")
     )
     assert response.status_code == 204
     assert not (env["documents_dir"] / "private__front_office__beta_notes.pdf").exists()
-    assert env["client"].get(
-        "/documents/get_all", headers=env["headers"]("admin")
-    ).json()["total"] == 3
-
-    event = _audit_event(
-        env, AuditAction.DOCUMENT_DELETE, resource_id=document_id
+    assert (
+        env["client"].get("/documents/get_all", headers=env["headers"]("admin")).json()["total"]
+        == 3
     )
+
+    event = _audit_event(env, AuditAction.DOCUMENT_DELETE, resource_id=document_id)
     assert event is not None
     assert event.result == AuditResult.SUCCESS.value
-    assert env["client"].delete(
-        f"/documents/delete/{document_id}", headers=env["headers"]("admin")
-    ).status_code == 404
+    assert (
+        env["client"]
+        .delete(f"/documents/delete/{document_id}", headers=env["headers"]("admin"))
+        .status_code
+        == 404
+    )
 
 
 def test_document_routes_require_authentication(document_context):
     env = document_context
     assert env["client"].get("/documents/get_all").status_code == 401
     assert env["client"].get("/documents/search_document?q=alpha").status_code == 401
-    assert env["client"].post(
-        "/documents/add",
-        data={
-            "title": "unauthenticated",
-            "department_id": env["ids"]["front_office"],
-            "visibility": "public",
-        },
-        files={"file": ("x.pdf", b"%PDF-1.4 test", "application/pdf")},
-    ).status_code == 401
+    assert (
+        env["client"]
+        .post(
+            "/documents/add",
+            data={
+                "title": "unauthenticated",
+                "department_id": env["ids"]["front_office"],
+                "visibility": "public",
+            },
+            files={"file": ("x.pdf", b"%PDF-1.4 test", "application/pdf")},
+        )
+        .status_code
+        == 401
+    )
+
+
+def test_document_titles_are_humanized(document_context):
+    env = document_context
+    response = env["client"].get("/documents/get_all", headers=env["headers"]("admin"))
+    titles = {item["title"] for item in response.json()["items"]}
+    assert "Alpha Report" in titles
+    assert "Confidential Report" in titles
+    assert "alpha_report" not in titles
+
+
+def test_admin_can_read_document_content(document_context):
+    env = document_context
+    document_id = _document_ids(env)["Alpha Report"]
+    response = env["client"].get(
+        f"/documents/{document_id}/content", headers=env["headers"]("admin")
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert "inline" in response.headers["content-disposition"]
+    assert response.content == b"%PDF-1.4 test"
+
+
+def test_content_respects_department_scope(document_context):
+    env = document_context
+    document_id = _document_ids(env)["Confidential Report"]
+    response = env["client"].get(
+        f"/documents/{document_id}/content", headers=env["headers"]("employee_a")
+    )
+    assert response.status_code == 403
+
+
+def test_content_missing_document_returns_404(document_context):
+    env = document_context
+    response = env["client"].get("/documents/9999/content", headers=env["headers"]("admin"))
+    assert response.status_code == 404
+
+
+def test_content_requires_authentication(document_context):
+    env = document_context
+    assert env["client"].get("/documents/1/content").status_code == 401

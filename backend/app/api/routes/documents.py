@@ -12,9 +12,10 @@ from fastapi import (
     Query,
     Request,
     Response,
-    status,
     UploadFile,
+    status,
 )
+from fastapi.responses import FileResponse
 from pypdf.errors import PdfReadError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,6 +33,7 @@ from app.services.document_service import (
     archive_file,
     build_stored_name,
     document_file_times,
+    document_path,
     extract_text,
     find_by_id,
     load_documents,
@@ -52,6 +54,10 @@ ROLE_PERMISSIONS = {
 }
 SortOrder = Literal["asc", "desc"]
 SORTABLE_FIELDS = {"id", "title", "created_at", "updated_at"}
+MEDIA_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 
 def _ip(request: Request) -> str | None:
@@ -102,9 +108,7 @@ def _department_map(db: Session) -> dict[str, Department]:
     }
 
 
-def _to_response(
-    doc: StoredDocument, departments: dict[str, Department]
-) -> DocumentResponse:
+def _to_response(doc: StoredDocument, departments: dict[str, Department]) -> DocumentResponse:
     department = departments.get(doc.department_token)
     return DocumentResponse(
         id=doc.id,
@@ -112,6 +116,9 @@ def _to_response(
         department_id=department.id if department else 0,
         department_name=department.name if department else doc.department_token,
         file_path=doc.file_path,
+        visibility=doc.visibility,
+        created_at=doc.created_at,
+        updated_at=doc.updated_at,
     )
 
 
@@ -173,8 +180,7 @@ def _scoped_documents(db: Session, current_user: User) -> list[StoredDocument]:
 
 def _name_taken(index: dict, stored_name: str, exclude_id: int | None = None) -> bool:
     return any(
-        doc["file_name"] == stored_name and doc["id"] != exclude_id
-        for doc in index["documents"]
+        doc["file_name"] == stored_name and doc["id"] != exclude_id for doc in index["documents"]
     )
 
 
@@ -185,9 +191,7 @@ def _parsed_document(stored_name: str, document_id: int) -> StoredDocument:
     return parsed
 
 
-def _build_request_name(
-    db: Session, document_data: CreateDocumentRequest, file: UploadFile
-) -> str:
+def _build_request_name(db: Session, document_data: CreateDocumentRequest, file: UploadFile) -> str:
     department = db.get(Department, document_data.department_id)
     if department is None:
         raise HTTPException(
@@ -220,13 +224,10 @@ def _get_accessible_document(
     if user.role != UserRole.ADMIN:
         same_department = (
             user.department is not None
-            and document.department_token
-            == sanitize_department_token(user.department.name)
+            and document.department_token == sanitize_department_token(user.department.name)
         )
         if document.visibility != "public" and not same_department:
-            _audit(
-                db, user, AuditAction.DOCUMENT_VIEW, AuditResult.FAILURE, request, document_id
-            )
+            _audit(db, user, AuditAction.DOCUMENT_VIEW, AuditResult.FAILURE, request, document_id)
             db.commit()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -268,6 +269,34 @@ def get_document(
     return _to_response(document, _department_map(db))
 
 
+@router.get("/{document_id:int}/content")
+def get_document_content(
+    document_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    _require_permission(db, current_user, "read", AuditAction.DOCUMENT_VIEW, request, document_id)
+    document = _get_accessible_document(db, document_id, current_user, request)
+
+    file_path = document_path(document.file_name)
+    if not file_path.is_file():
+        _audit(
+            db, current_user, AuditAction.DOCUMENT_VIEW, AuditResult.FAILURE, request, document_id
+        )
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
+
+    _audit(db, current_user, AuditAction.DOCUMENT_VIEW, AuditResult.SUCCESS, request, document.id)
+    db.commit()
+    return FileResponse(
+        path=file_path,
+        media_type=MEDIA_TYPES.get(document.extension, "application/octet-stream"),
+        filename=f"{document.title}{document.extension}",
+        content_disposition_type="inline",
+    )
+
+
 @router.post("/add", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 def create_document(
     request: Request,
@@ -281,9 +310,13 @@ def create_document(
     _require_permission(db, current_user, "create", AuditAction.DOCUMENT_CREATE, request)
     clean_title = title.strip()
     if not clean_title:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Title must not be blank")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Title must not be blank"
+        )
     if db.get(Department, department_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department does not exist")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Department does not exist"
+        )
 
     document_data = CreateDocumentRequest(
         title=clean_title, department_id=department_id, visibility=visibility
@@ -332,26 +365,38 @@ def update_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_permission(db, current_user, "update", AuditAction.DOCUMENT_UPDATE, request, document_id)
+    _require_permission(
+        db, current_user, "update", AuditAction.DOCUMENT_UPDATE, request, document_id
+    )
     clean_title = title.strip()
     if not clean_title:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Title must not be blank")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Title must not be blank"
+        )
     if db.get(Department, department_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Department does not exist")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Department does not exist"
+        )
 
     index = sync_index_with_folder()
     entry = find_by_id(index, document_id)
     if entry is None:
-        _audit(db, current_user, AuditAction.DOCUMENT_UPDATE, AuditResult.FAILURE, request, document_id)
+        _audit(
+            db, current_user, AuditAction.DOCUMENT_UPDATE, AuditResult.FAILURE, request, document_id
+        )
         db.commit()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requested document does not exist")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Requested document does not exist"
+        )
 
     document_data = CreateDocumentRequest(
         title=clean_title, department_id=department_id, visibility=visibility
     )
     new_stored_name = _build_request_name(db, document_data, file)
     if _name_taken(index, new_stored_name, exclude_id=document_id):
-        _audit(db, current_user, AuditAction.DOCUMENT_UPDATE, AuditResult.FAILURE, request, document_id)
+        _audit(
+            db, current_user, AuditAction.DOCUMENT_UPDATE, AuditResult.FAILURE, request, document_id
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -365,7 +410,9 @@ def update_document(
         extract_text(temp_name)
     except (OSError, ValueError, FileExistsError, PdfReadError, PackageNotFoundError):
         remove_document_file(temp_name)
-        _audit(db, current_user, AuditAction.DOCUMENT_UPDATE, AuditResult.FAILURE, request, document_id)
+        _audit(
+            db, current_user, AuditAction.DOCUMENT_UPDATE, AuditResult.FAILURE, request, document_id
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -380,7 +427,9 @@ def update_document(
         save_index(index)
     except OSError:
         remove_document_file(temp_name)
-        _audit(db, current_user, AuditAction.DOCUMENT_UPDATE, AuditResult.FAILURE, request, document_id)
+        _audit(
+            db, current_user, AuditAction.DOCUMENT_UPDATE, AuditResult.FAILURE, request, document_id
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -400,20 +449,28 @@ def delete_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _require_permission(db, current_user, "delete", AuditAction.DOCUMENT_DELETE, request, document_id)
+    _require_permission(
+        db, current_user, "delete", AuditAction.DOCUMENT_DELETE, request, document_id
+    )
     index = sync_index_with_folder()
     entry = find_by_id(index, document_id)
     if entry is None:
-        _audit(db, current_user, AuditAction.DOCUMENT_DELETE, AuditResult.FAILURE, request, document_id)
+        _audit(
+            db, current_user, AuditAction.DOCUMENT_DELETE, AuditResult.FAILURE, request, document_id
+        )
         db.commit()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requested document does not exist")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Requested document does not exist"
+        )
 
     try:
         remove_document_file(entry["file_name"])
         index["documents"] = [doc for doc in index["documents"] if doc["id"] != document_id]
         save_index(index)
     except OSError:
-        _audit(db, current_user, AuditAction.DOCUMENT_DELETE, AuditResult.FAILURE, request, document_id)
+        _audit(
+            db, current_user, AuditAction.DOCUMENT_DELETE, AuditResult.FAILURE, request, document_id
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

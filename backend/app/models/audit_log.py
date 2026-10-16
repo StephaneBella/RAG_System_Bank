@@ -15,12 +15,17 @@ class AuditAction(str, Enum):
     DOCUMENT_CREATE = "DOCUMENT_CREATE"
     DOCUMENT_UPDATE = "DOCUMENT_UPDATE"
     DOCUMENT_DELETE = "DOCUMENT_DELETE"
+    USER_CREATE = "USER_CREATE"
+    USER_UPDATE = "USER_UPDATE"
+    USER_STATUS_UPDATE = "USER_STATUS_UPDATE"
+    EXPORT = "EXPORT"
 
 
 # For now we can focus only on login and document access audits
 class ResourceType(str, Enum):
     DOCUMENT = "DOCUMENT"
     USER = "USER"
+    SESSION = "SESSION"
 
 
 class AuditResult(str, Enum):

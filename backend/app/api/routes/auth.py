@@ -12,8 +12,8 @@ from app.models.audit_log import AuditAction, AuditResult, ResourceType
 from app.models.revoked_token import RevokedToken
 from app.models.user import User
 from app.schemas.auth import CurrentUserResponse, LoginRequest, TokenResponse
-from app.services.audit import log_audit_event
 from app.schemas.invitation import InvitationAccept
+from app.services.audit import log_audit_event
 from app.services.auth import authenticate_user
 from app.services.invitation_service import accept_invitation
 

@@ -221,6 +221,8 @@ def test_logout_is_audited(client):
     assert events[0].resource_type == ResourceType.USER.value
     assert events[0].resource_id == 1
     assert events[0].result == AuditResult.SUCCESS.value
+
+
 def test_me_rejects_invalid_token(client):
     response = client.get(
         "/auth/me",
