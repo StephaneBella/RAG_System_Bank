@@ -13,11 +13,6 @@ interface LocationState {
   from?: { pathname?: string };
 }
 
-const DEMO_ACCOUNTS = {
-  admin: 'sophie.moreau@banque-institution.fr',
-  employee: 'alexandre.laurent@banque-institution.fr',
-} as const;
-
 export function LoginPage(): JSX.Element {
   const { t } = useTranslation();
   const { login, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
@@ -74,12 +69,6 @@ export function LoginPage(): JSX.Element {
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const fillDemo = (value: string) => {
-    setEmail(value);
-    setPassword('Password123');
-    setFormError(null);
   };
 
   return (
@@ -180,29 +169,6 @@ export function LoginPage(): JSX.Element {
           >
             {submitting ? t('auth.signingIn') : t('auth.signIn')}
           </Button>
-
-          <div className="rounded-lg border border-hairline bg-slate-50 p-3">
-            <div className="mb-2 flex items-center gap-1.5 font-label-sm text-label-sm uppercase tracking-wider text-faint">
-              <Icon name="key" className="text-[16px]" />
-              {t('auth.demoHint')}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => fillDemo(DEMO_ACCOUNTS.admin)}
-                className="rounded-md border border-hairline bg-surface-container-lowest px-2.5 py-1 font-body-sm text-body-sm text-on-surface transition-colors hover:bg-surface-container"
-              >
-                {t('auth.demoAdmin')}
-              </button>
-              <button
-                type="button"
-                onClick={() => fillDemo(DEMO_ACCOUNTS.employee)}
-                className="rounded-md border border-hairline bg-surface-container-lowest px-2.5 py-1 font-body-sm text-body-sm text-on-surface transition-colors hover:bg-surface-container"
-              >
-                {t('auth.demoEmployee')}
-              </button>
-            </div>
-          </div>
         </form>
       </div>
     </div>

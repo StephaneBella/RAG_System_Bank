@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 
+import { auditApi } from '@/api';
 import type { User } from '@/api/types';
 import { AuditResultBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -11,7 +11,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useAudit } from '@/hooks/useAudit';
 import { useLocale } from '@/hooks/useLocale';
-import { formatDateTime } from '@/lib/utils';
+import { downloadBlob, formatDateTime } from '@/lib/utils';
 
 interface UserActivityModalProps {
   user: User | null;
@@ -22,13 +22,23 @@ export function UserActivityModal({ user, onClose }: UserActivityModalProps): JS
   const { t } = useTranslation();
   const locale = useLocale();
   const toast = useToast();
-  const auditQuery = useAudit({ page: 1, page_size: 100 }, Boolean(user));
+  const auditQuery = useAudit(
+    { page: 1, page_size: 30, user_email: user?.email },
+    Boolean(user),
+  );
 
-  const events = useMemo(() => {
-    const all = auditQuery.data?.items ?? [];
-    if (!user) return [];
-    return all.filter((log) => log.user_email === user.email).slice(0, 30);
-  }, [auditQuery.data, user]);
+  const events = auditQuery.data?.items ?? [];
+
+  const handleDownload = async () => {
+    if (!user) return;
+    try {
+      const blob = await auditApi.exportAudit({ user_email: user.email });
+      downloadBlob(blob, `audit-${user.email}.csv`);
+      toast.success(t('admin.audit.exportDone'));
+    } catch {
+      toast.error(t('errors.generic'));
+    }
+  };
 
   if (!user) return <></>;
 
@@ -41,11 +51,7 @@ export function UserActivityModal({ user, onClose }: UserActivityModalProps): JS
       title={t('admin.users.activityTitle')}
       footer={
         <>
-          <Button
-            variant="ghost"
-            icon="download"
-            onClick={() => toast.notify(t('admin.users.downloadReport'))}
-          >
+          <Button variant="ghost" icon="download" onClick={handleDownload}>
             {t('admin.users.downloadReport')}
           </Button>
           <Link to="/admin/audit">
@@ -93,7 +99,11 @@ export function UserActivityModal({ user, onClose }: UserActivityModalProps): JS
                     {t(`auditActions.${event.action}`)}
                   </span>
                   <span className="truncate font-body-lg text-body-lg text-on-surface-variant">
-                    {formatDateTime(event.timestamp, locale)} · {event.resource_label ?? '—'}
+                    {formatDateTime(event.timestamp, locale)} ·{' '}
+                    {t(`resourceTypes.${event.resource_type}`, {
+                      defaultValue: event.resource_type,
+                    })}
+                    {event.resource_id !== null ? ` #${event.resource_id}` : ''}
                   </span>
                 </div>
                 <AuditResultBadge

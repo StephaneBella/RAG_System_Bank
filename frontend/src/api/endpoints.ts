@@ -1,35 +1,33 @@
 /**
  * Single source of truth for every backend route the app relies on.
- *
- * Routes marked "existing" are already implemented in the FastAPI backend.
- * The rest are the contract the backend must fulfil for this frontend sprint;
- * until then they are served by MSW mocks (see `src/mocks/handlers.ts`).
  */
 export const endpoints = {
   auth: {
-    login: '/auth/login', // existing
-    me: '/auth/me', // existing
-    logout: '/auth/logout', // existing
+    login: '/auth/login',
+    me: '/auth/me',
+    logout: '/auth/logout',
+    acceptInvitation: '/auth/accept-invitation',
   },
   departments: {
-    list: '/departments', // TODO backend
+    list: '/departments',
   },
   documents: {
-    list: '/documents/get_all', // existing
-    create: '/documents/add', // existing (multipart)
-    update: (id: number) => `/documents/update/${id}`, // existing (multipart)
-    remove: (id: number) => `/documents/delete/${id}`, // existing
-    search: '/documents/search_document', // existing
-    get: (id: number) => `/documents/get/${id}`, // TODO backend
+    list: '/documents/get_all',
+    create: '/documents/add',
+    update: (id: number) => `/documents/update/${id}`,
+    remove: (id: number) => `/documents/delete/${id}`,
+    search: '/documents/search_document',
+    get: (id: number) => `/documents/${id}`,
+    content: (id: number) => `/documents/${id}/content`,
   },
   users: {
-    list: '/users', // TODO backend
-    create: '/users', // TODO backend
-    update: (id: number) => `/users/${id}`, // TODO backend
-    status: (id: number) => `/users/${id}/status`, // TODO backend
+    list: '/users',
+    createInvitation: '/users/invitations',
+    update: (id: number) => `/users/${id}`,
+    status: (id: number) => `/users/${id}/status`,
   },
   audit: {
-    list: '/audit', // TODO backend
-    export: '/audit/export', // TODO backend
+    list: '/audit',
+    export: '/audit/export',
   },
 } as const;

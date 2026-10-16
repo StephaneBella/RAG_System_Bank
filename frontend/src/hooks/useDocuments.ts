@@ -34,6 +34,16 @@ export function useDocument(id: number | undefined) {
   });
 }
 
+export function useDocumentContent(id: number | undefined, enabled = true) {
+  const { isAuthenticated } = useAuth();
+  return useQuery({
+    queryKey: queryKeys.documents.content(id ?? 0),
+    queryFn: () => documentsApi.getDocumentContent(id as number),
+    enabled: isAuthenticated && enabled && typeof id === 'number' && Number.isFinite(id),
+    staleTime: Infinity,
+  });
+}
+
 function invalidateDocuments(queryClient: ReturnType<typeof useQueryClient>) {
   void queryClient.invalidateQueries({ queryKey: queryKeys.documents.all });
 }

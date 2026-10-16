@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { Classification, Department, DocumentItem } from '@/api/types';
+import type { Department, DocumentItem, Visibility } from '@/api/types';
 import type { DocumentFormValues } from '@/api/documents.api';
 import { Button } from '@/components/ui/Button';
 import { FileDropzone } from '@/components/ui/FileDropzone';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
-import { Textarea } from '@/components/ui/Textarea';
 
-const CLASSIFICATIONS: Classification[] = ['public', 'private', 'confidential'];
+const VISIBILITIES: Visibility[] = ['public', 'private'];
 
 interface DocumentFormModalProps {
   open: boolean;
@@ -36,8 +35,7 @@ export function DocumentFormModal({
 
   const [title, setTitle] = useState('');
   const [departmentId, setDepartmentId] = useState('');
-  const [classification, setClassification] = useState<Classification>('private');
-  const [description, setDescription] = useState('');
+  const [visibility, setVisibility] = useState<Visibility>('private');
   const [file, setFile] = useState<File | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -45,8 +43,7 @@ export function DocumentFormModal({
     if (!open) return;
     setTitle(document?.title ?? '');
     setDepartmentId(document ? String(document.department_id) : '');
-    setClassification(document?.classification ?? 'private');
-    setDescription(document?.description ?? '');
+    setVisibility(document?.visibility ?? 'private');
     setFile(null);
     setErrors({});
   }, [open, document]);
@@ -62,8 +59,7 @@ export function DocumentFormModal({
     onSubmit({
       title: title.trim(),
       department_id: Number(departmentId),
-      classification,
-      description: description.trim() || undefined,
+      visibility,
       file,
     });
   };
@@ -118,14 +114,14 @@ export function DocumentFormModal({
           </Select>
 
           <Select
-            id="doc-classification"
-            label={t('admin.documents.formClassification')}
-            value={classification}
-            onChange={(event) => setClassification(event.target.value as Classification)}
+            id="doc-visibility"
+            label={t('admin.documents.formVisibility')}
+            value={visibility}
+            onChange={(event) => setVisibility(event.target.value as Visibility)}
           >
-            {CLASSIFICATIONS.map((value) => (
+            {VISIBILITIES.map((value) => (
               <option key={value} value={value}>
-                {t(`classifications.${value}`)}
+                {t(`visibilities.${value}`)}
               </option>
             ))}
           </Select>
@@ -144,13 +140,6 @@ export function DocumentFormModal({
             error={errors.file}
           />
         </div>
-
-        <Textarea
-          id="doc-description"
-          label={t('admin.documents.formDescription')}
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-        />
 
         {serverError && (
           <div className="flex items-center gap-2 rounded-lg border border-[#fca5a5] bg-[#fef2f2] px-3 py-2 text-body-sm text-[#991b1b]">

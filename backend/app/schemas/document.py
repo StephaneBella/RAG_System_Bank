@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -15,5 +16,8 @@ class DocumentResponse(BaseModel):
     department_id: int
     department_name: str
     file_path: str
+    visibility: Literal["public", "private"]
+    created_at: datetime
+    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

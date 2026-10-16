@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cn, fileExtension, formatFileSize, initials, isTokenExpired, truncateHash } from './utils';
+import { cn, fileExtension, initials, isTokenExpired, truncateHash } from './utils';
 
 describe('cn', () => {
   it('keeps custom font-size tokens alongside text colors', () => {
@@ -8,15 +8,6 @@ describe('cn', () => {
     expect(cn('text-white', 'text-label-md')).toContain('text-label-md');
     expect(cn('text-label-sm', 'text-on-surface-variant')).toContain('text-label-sm');
     expect(cn('text-body-sm', 'text-on-surface')).toContain('text-body-sm');
-  });
-});
-
-describe('formatFileSize', () => {
-  it('formats bytes into human readable units', () => {
-    expect(formatFileSize(0)).toBe('—');
-    expect(formatFileSize(512)).toBe('512 o');
-    expect(formatFileSize(2048)).toBe('2.0 Ko');
-    expect(formatFileSize(1024 * 1024 * 3)).toBe('3.0 Mo');
   });
 });
 

@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 
-import type { Classification, DocumentItem } from '@/api/types';
+import type { DocumentItem, Visibility } from '@/api/types';
 import { AppShell } from '@/components/layout/AppShell';
-import { ClassificationBadge } from '@/components/ui/Badge';
+import { VisibilityBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -14,11 +14,11 @@ import { SearchInput } from '@/components/ui/SearchInput';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useDebounce } from '@/hooks/useDebounce';
-import { useDocuments, useSearchDocuments } from '@/hooks/useDocuments';
+import { useDocuments } from '@/hooks/useDocuments';
 import { useLocale } from '@/hooks/useLocale';
 import { formatDate } from '@/lib/utils';
 
-const CLASSIFICATIONS: Classification[] = ['public', 'private', 'confidential'];
+const VISIBILITIES: Visibility[] = ['public', 'private'];
 const PAGE_SIZE = 20;
 
 export function LibraryPage(): JSX.Element {
@@ -27,27 +27,27 @@ export function LibraryPage(): JSX.Element {
   const navigate = useNavigate();
 
   const [search, setSearch] = useState('');
-  const [classification, setClassification] = useState<Classification | 'all'>('all');
+  const [visibility, setVisibility] = useState<Visibility | 'all'>('all');
   const [page, setPage] = useState(1);
 
   const debouncedSearch = useDebounce(search, 300);
-  const isSearching = debouncedSearch.trim().length > 0;
 
-  const listQuery = useDocuments(
-    { page, page_size: PAGE_SIZE, sort_by: 'updated_at', order: 'desc' },
-    !isSearching,
-  );
-  const searchQuery = useSearchDocuments(
-    { q: debouncedSearch.trim(), page, page_size: PAGE_SIZE, sort_by: 'updated_at', order: 'desc' },
-    isSearching,
-  );
+  const documentsQuery = useDocuments({
+    page,
+    page_size: PAGE_SIZE,
+    sort_by: 'updated_at',
+    order: 'desc',
+  });
 
-  const active = isSearching ? searchQuery : listQuery;
   const items = useMemo(() => {
-    const all = active.data?.items ?? [];
-    if (classification === 'all') return all;
-    return all.filter((doc) => (doc.classification ?? 'private') === classification);
-  }, [active.data, classification]);
+    const all = documentsQuery.data?.items ?? [];
+    const needle = debouncedSearch.trim().toLowerCase();
+    return all.filter((doc) => {
+      if (visibility !== 'all' && doc.visibility !== visibility) return false;
+      if (needle && !doc.title.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+  }, [documentsQuery.data, debouncedSearch, visibility]);
 
   const handleSearchChange = (value: string) => {
     setSearch(value);
@@ -71,7 +71,7 @@ export function LibraryPage(): JSX.Element {
             </p>
           </div>
           <div className="shrink-0 rounded-lg bg-surface-container-low px-3 py-1.5 font-body-sm text-body-sm text-on-surface-variant">
-            {t('common.documentsAvailable', { count: active.data?.total ?? 0 })}
+            {t('common.documentsAvailable', { count: documentsQuery.data?.total ?? 0 })}
           </div>
         </div>
 
@@ -83,22 +83,22 @@ export function LibraryPage(): JSX.Element {
             ariaLabel={t('common.search')}
           />
           <Select
-            value={classification}
-            onChange={(event) => setClassification(event.target.value as Classification | 'all')}
+            value={visibility}
+            onChange={(event) => setVisibility(event.target.value as Visibility | 'all')}
             className="sm:w-56"
-            aria-label={t('library.classificationLabel')}
+            aria-label={t('library.visibilityLabel')}
           >
-            <option value="all">{t('library.allClassifications')}</option>
-            {CLASSIFICATIONS.map((value) => (
+            <option value="all">{t('library.allVisibilities')}</option>
+            {VISIBILITIES.map((value) => (
               <option key={value} value={value}>
-                {t(`classifications.${value}`)}
+                {t(`visibilities.${value}`)}
               </option>
             ))}
           </Select>
         </div>
 
         <Card className="mt-4 overflow-hidden">
-          {active.isLoading ? (
+          {documentsQuery.isLoading ? (
             <ul className="flex flex-col divide-y divide-surface-container-high">
               {Array.from({ length: 5 }).map((_, index) => (
                 <li key={index} className="flex items-center justify-between gap-4 p-4">
@@ -113,13 +113,17 @@ export function LibraryPage(): JSX.Element {
                 </li>
               ))}
             </ul>
-          ) : active.isError ? (
+          ) : documentsQuery.isError ? (
             <EmptyState
               icon="wifi_off"
               title={t('errors.generic')}
               description={undefined}
               action={
-                <Button variant="secondary" icon="refresh" onClick={() => void active.refetch()}>
+                <Button
+                  variant="secondary"
+                  icon="refresh"
+                  onClick={() => void documentsQuery.refetch()}
+                >
                   {t('common.retry')}
                 </Button>
               }
@@ -135,7 +139,7 @@ export function LibraryPage(): JSX.Element {
                   icon="restart_alt"
                   onClick={() => {
                     setSearch('');
-                    setClassification('all');
+                    setVisibility('all');
                   }}
                 >
                   {t('library.resetFilters')}
@@ -165,9 +169,9 @@ export function LibraryPage(): JSX.Element {
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <ClassificationBadge
-                        classification={doc.classification}
-                        label={t(`classifications.${doc.classification ?? 'private'}`)}
+                      <VisibilityBadge
+                        visibility={doc.visibility}
+                        label={t(`visibilities.${doc.visibility}`)}
                       />
                       <Icon name="chevron_right" className="text-[20px] text-outline" />
                     </div>
@@ -178,11 +182,11 @@ export function LibraryPage(): JSX.Element {
           )}
         </Card>
 
-        {active.data && (
+        {documentsQuery.data && (
           <Pagination
-            page={active.data.page}
-            pages={active.data.pages}
-            total={active.data.total}
+            page={documentsQuery.data.page}
+            pages={documentsQuery.data.pages}
+            total={documentsQuery.data.total}
             onPageChange={setPage}
           />
         )}

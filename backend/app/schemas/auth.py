@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, AliasPath
+from pydantic import AliasPath, BaseModel, ConfigDict, EmailStr, Field
 
 from app.models.user import UserRole, UserStatus
 

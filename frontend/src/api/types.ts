@@ -27,21 +27,17 @@ export interface TokenResponse {
   token_type: string;
 }
 
-export type Classification = 'public' | 'private' | 'confidential';
+export type Visibility = 'public' | 'private';
 
 export interface DocumentItem {
   id: number;
   title: string;
   department_id: number;
   department_name: string;
-  classification?: Classification;
-  file_name?: string;
-  file_path?: string;
-  file_size?: number;
-  mime_type?: string;
-  description?: string;
-  created_at?: string;
-  updated_at?: string;
+  file_path: string;
+  visibility: Visibility;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface SortOrder {
@@ -74,6 +70,18 @@ export interface CreateUserRequest {
   department_id: number;
 }
 
+export interface InvitationCreated {
+  user_id: number;
+  email: string;
+  invitation_token: string;
+  expires_at: string;
+}
+
+export interface AcceptInvitationRequest {
+  token: string;
+  password: string;
+}
+
 export interface UpdateUserRequest {
   email?: string;
   role?: UserRole;
@@ -92,6 +100,7 @@ export type AuditAction =
   | 'LOGIN'
   | 'LOGOUT'
   | 'DOCUMENT_VIEW'
+  | 'DOCUMENT_SEARCH'
   | 'DOCUMENT_CREATE'
   | 'DOCUMENT_UPDATE'
   | 'DOCUMENT_DELETE'
@@ -100,19 +109,19 @@ export type AuditAction =
   | 'USER_STATUS_UPDATE'
   | 'EXPORT';
 
+export type AuditResourceType = 'DOCUMENT' | 'USER' | 'SESSION';
+
 export type AuditResult = 'SUCCESS' | 'FAILURE';
 
 export interface AuditLog {
   id: number;
-  user_id: number;
-  user_email: string;
+  user_id: number | null;
+  user_email: string | null;
   action: AuditAction;
-  resource_type: 'DOCUMENT' | 'USER' | 'SESSION';
-  resource_id: number;
-  resource_label?: string;
+  resource_type: AuditResourceType;
+  resource_id: number | null;
   result: AuditResult;
-  ip_address?: string;
-  context?: string;
+  ip_address: string | null;
   timestamp: string;
 }
 

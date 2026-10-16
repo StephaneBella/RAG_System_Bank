@@ -22,7 +22,7 @@ function invalidateUsers(queryClient: ReturnType<typeof useQueryClient>) {
 export function useCreateUser() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: CreateUserRequest) => usersApi.createUser(payload),
+    mutationFn: (payload: CreateUserRequest) => usersApi.createInvitation(payload),
     onSuccess: () => invalidateUsers(queryClient),
   });
 }

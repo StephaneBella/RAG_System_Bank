@@ -55,14 +55,6 @@ export function formatDateTime(value?: string | null, locale = 'fr-FR'): string 
   }).format(date);
 }
 
-export function formatFileSize(bytes?: number | null): string {
-  if (!bytes || bytes <= 0) return '—';
-  const units = ['o', 'Ko', 'Mo', 'Go'];
-  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const size = bytes / 1024 ** exponent;
-  return `${size.toFixed(exponent === 0 ? 0 : 1)} ${units[exponent]}`;
-}
-
 export function fileExtension(fileName?: string | null): string {
   if (!fileName) return '';
   const parts = fileName.split('.');
@@ -111,4 +103,15 @@ export function isTokenExpired(token: string, skewSeconds = 5): boolean {
 
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function downloadBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }

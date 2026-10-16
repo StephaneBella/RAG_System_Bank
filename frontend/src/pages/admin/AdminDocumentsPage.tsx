@@ -6,7 +6,7 @@ import { getApiErrorMessage } from '@/api/errors';
 import type { DocumentItem } from '@/api/types';
 import type { DocumentFormValues } from '@/api/documents.api';
 import { DocumentFormModal } from '@/components/documents/DocumentFormModal';
-import { ClassificationBadge } from '@/components/ui/Badge';
+import { VisibilityBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -226,9 +226,9 @@ export function AdminDocumentsPage(): JSX.Element {
                       {formatDate(doc.updated_at ?? doc.created_at, locale)}
                     </td>
                     <td className="px-4 py-3">
-                      <ClassificationBadge
-                        classification={doc.classification}
-                        label={t(`classifications.${doc.classification ?? 'private'}`)}
+                      <VisibilityBadge
+                        visibility={doc.visibility}
+                        label={t(`visibilities.${doc.visibility}`)}
                       />
                     </td>
                     <td className="px-4 py-3">

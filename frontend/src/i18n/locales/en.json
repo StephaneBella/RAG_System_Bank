@@ -53,10 +53,9 @@
     "ACTIVE": "Active",
     "INACTIVE": "Inactive"
   },
-  "classifications": {
+  "visibilities": {
     "public": "Public",
-    "private": "Private",
-    "confidential": "Confidential"
+    "private": "Private"
   },
   "departments": {
     "Direction Générale": "General Management",
@@ -69,6 +68,7 @@
     "LOGIN": "Sign in",
     "LOGOUT": "Sign out",
     "DOCUMENT_VIEW": "Document view",
+    "DOCUMENT_SEARCH": "Document search",
     "DOCUMENT_CREATE": "Document creation",
     "DOCUMENT_UPDATE": "Document update",
     "DOCUMENT_DELETE": "Document deletion",
@@ -80,6 +80,11 @@
   "auditResults": {
     "SUCCESS": "Success",
     "FAILURE": "Failure"
+  },
+  "resourceTypes": {
+    "DOCUMENT": "Document",
+    "USER": "User",
+    "SESSION": "Session"
   },
   "auth": {
     "brand": "Documentary Vault",
@@ -98,10 +103,7 @@
     "success": "Signed in successfully. Redirecting…",
     "invalidCredentials": "Invalid email or password.",
     "sessionExpired": "Your session has expired. Please sign in again.",
-    "logoutSuccess": "You have been securely signed out.",
-    "demoHint": "Demo accounts",
-    "demoAdmin": "Administrator",
-    "demoEmployee": "Employee"
+    "logoutSuccess": "You have been securely signed out."
   },
   "nav": {
     "adminConsole": "Administration Console",
@@ -115,33 +117,24 @@
   "library": {
     "title": "My documents",
     "subtitle": "Search and browse the documents linked to your department.",
-    "searchPlaceholder": "Search a document by keyword or title…",
-    "classificationLabel": "Classification",
-    "allClassifications": "All classifications",
+    "searchPlaceholder": "Search by title…",
+    "visibilityLabel": "Visibility",
+    "allVisibilities": "All visibilities",
     "noResultsTitle": "No document found",
     "noResultsHint": "No document matches your search criteria.",
     "resetFilters": "Reset filters",
-    "readOnlyTitle": "Content preview",
-    "readOnlyBody": "This document can be viewed read-only in your secure workspace.",
-    "readingTitle": "Reading the document",
-    "searching": "Searching…",
-    "departmentLabel": "Department"
+    "readOnlyBody": "This document can be viewed read-only in your secure workspace."
   },
   "document": {
-    "metadata": "Metadata",
     "format": "Format",
-    "size": "Size",
     "reference": "Reference",
     "createdAt": "Added on",
     "updatedAt": "Updated on",
     "department": "Department",
-    "classification": "Classification",
-    "status": "Status",
-    "viewer": "Document viewer",
-    "page": "Page",
-    "of": "of",
-    "zoomIn": "Zoom in",
-    "zoomOut": "Zoom out",
+    "download": "Download",
+    "previewLoading": "Loading document…",
+    "previewError": "Unable to load the document preview.",
+    "previewUnavailable": "Preview is not available for this format. Download the file to read it.",
     "notFoundTitle": "Document not found",
     "notFoundBody": "This document does not exist or is not accessible from your department.",
     "forbiddenTitle": "Access denied",
@@ -169,7 +162,7 @@
         "title": "Document title",
         "department": "Department",
         "date": "Last updated",
-        "status": "Classification",
+        "status": "Visibility",
         "actions": "Actions"
       },
       "newTitle": "New document",
@@ -177,11 +170,10 @@
       "formTitlePlaceholder": "E.g. Internal charter 2024",
       "formDepartment": "Department",
       "selectDepartment": "Select a department",
-      "formClassification": "Classification",
+      "formVisibility": "Visibility",
       "formFile": "File",
       "dropHint": "Drag & drop the file or click to browse",
       "formatsHint": "Accepted formats: PDF, DOCX (max 10 MB)",
-      "formDescription": "Optional description",
       "fileSelected": "Selected file: {{name}}",
       "createdToast": "Document created successfully.",
       "updatedToast": "Document updated successfully.",
@@ -220,6 +212,7 @@
       "role": "Role",
       "department": "Department",
       "createdToast": "User created successfully.",
+      "inviteSentToast": "Invitation sent. The account becomes active once the link is accepted.",
       "updatedToast": "User updated successfully.",
       "statusToast": "User status updated.",
       "activityTitle": "Activity history",
@@ -228,7 +221,12 @@
       "downloadReport": "Download report",
       "accountActive": "Active account",
       "accountInactive": "Inactive account",
-      "empty": "No user for these criteria."
+      "empty": "No user for these criteria.",
+      "inviteTitle": "Invitation sent",
+      "inviteSubtitle": "Share this link with the user. It expires on {{date}}.",
+      "inviteLinkLabel": "Invitation link",
+      "copyLink": "Copy link",
+      "copiedLink": "Invitation link copied to clipboard"
     },
     "audit": {
       "title": "Audit log and traceability",
@@ -270,6 +268,23 @@
     "emailRequired": "Email address is required.",
     "emailInvalid": "Invalid email address.",
     "passwordRequired": "Password is required.",
-    "required": "This field is required."
+    "required": "This field is required.",
+    "passwordTooShort": "Password must be at least 12 characters.",
+    "passwordMismatch": "Passwords do not match."
+  },
+  "invitation": {
+    "title": "Accept your invitation",
+    "subtitle": "Set your password to activate your account.",
+    "tokenLabel": "Invitation token",
+    "tokenPlaceholder": "Paste the token you received",
+    "passwordLabel": "New password",
+    "passwordPlaceholder": "••••••••••••••••",
+    "confirmPasswordLabel": "Confirm password",
+    "confirmPasswordPlaceholder": "••••••••••••••••",
+    "submit": "Activate my account",
+    "submitting": "Activating…",
+    "success": "Account activated. You can now sign in.",
+    "invalidToken": "This invitation token is invalid or has expired.",
+    "goToLogin": "Back to sign in"
   }
 }

@@ -2,6 +2,7 @@ import { apiClient } from './client';
 import { endpoints } from './endpoints';
 import type {
   CreateUserRequest,
+  InvitationCreated,
   Page,
   UpdateUserRequest,
   User,
@@ -13,8 +14,11 @@ export async function listUsers(params: UsersQuery = {}): Promise<Page<User>> {
   return data;
 }
 
-export async function createUser(payload: CreateUserRequest): Promise<User> {
-  const { data } = await apiClient.post<User>(endpoints.users.create, payload);
+export async function createInvitation(payload: CreateUserRequest): Promise<InvitationCreated> {
+  const { data } = await apiClient.post<InvitationCreated>(
+    endpoints.users.createInvitation,
+    payload,
+  );
   return data;
 }
 

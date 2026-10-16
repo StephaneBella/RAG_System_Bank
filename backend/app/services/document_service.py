@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import copyfileobj, move
@@ -16,7 +17,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 ALLOWED_VISIBILITIES = {"public", "private"}
 INDEX_NAME = ".documents.json"
 
-_DEPARTMENT_UNSAFE_CHARS = "/\\:*?\"<>|"
+_DEPARTMENT_UNSAFE_CHARS = '/\\:*?"<>|'
 
 
 class StoredDocument:
@@ -44,10 +45,17 @@ class StoredDocument:
 
 
 def sanitize_department_token(name: str) -> str:
-    token = "".join(
-        "_" if ch in _DEPARTMENT_UNSAFE_CHARS else ch for ch in name.lower()
-    ).replace(" ", "_")
+    token = "".join("_" if ch in _DEPARTMENT_UNSAFE_CHARS else ch for ch in name.lower()).replace(
+        " ", "_"
+    )
     return token.strip("_")
+
+
+def humanize_title(raw: str) -> str:
+    """Turn a stored slug ("my_report-2024") into a readable title ("My Report 2024")."""
+    separated = re.sub(r"[_\-]+", " ", raw)
+    words = separated.split()
+    return " ".join(word[:1].upper() + word[1:] for word in words)
 
 
 def sanitize_title(title: str) -> str:
@@ -76,7 +84,7 @@ def parse_stored_name(file_name: str) -> StoredDocument | None:
     if extension not in ALLOWED_EXTENSIONS:
         return None
 
-    title = Path(base).stem
+    title = humanize_title(Path(base).stem)
     return StoredDocument(
         id=0,
         file_name=file_name,
@@ -100,6 +108,11 @@ def list_document_files() -> list[Path]:
 
 def _index_file() -> Path:
     return DOCUMENTS_DIR / INDEX_NAME
+
+
+def document_path(file_name: str) -> Path:
+    """Absolute path of a stored document (reads DOCUMENTS_DIR at call time)."""
+    return DOCUMENTS_DIR / file_name
 
 
 def load_index() -> dict:
