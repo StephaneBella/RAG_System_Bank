@@ -171,6 +171,8 @@ def test_me_returns_authenticated_user(client):
     assert response.json()["email"] == "auth.test@example.com"
     assert response.json()["role"] == "ADMIN"
     assert response.json()["status"] == "ACTIVE"
+    assert response.json()["department_id"] == 1
+    assert response.json()["department_name"] == "Test Department"
 
 
 def test_logout_revokes_token(client):
@@ -219,3 +221,64 @@ def test_logout_is_audited(client):
     assert events[0].resource_type == ResourceType.USER.value
     assert events[0].resource_id == 1
     assert events[0].result == AuditResult.SUCCESS.value
+def test_me_rejects_invalid_token(client):
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": "Bearer invalid.token.value"},
+    )
+    assert response.status_code == 401
+
+
+def test_me_rejects_expired_token(client):
+    from datetime import UTC, datetime, timedelta
+
+    import jwt
+
+    from app.core.config import settings
+
+    expired_payload = {
+        "sub": "1",
+        "role": "ADMIN",
+        "iat": datetime.now(UTC) - timedelta(hours=2),
+        "exp": datetime.now(UTC) - timedelta(hours=1),
+        "jti": "expired-token-test",
+    }
+    token = jwt.encode(
+        expired_payload,
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 401
+
+
+def test_login_rejects_inactive_user(client):
+    from app.db.session import get_db
+
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        department = db.query(Department).filter_by(name="Test Department").first()
+        inactive_user = User(
+            email="inactive.auth@example.com",
+            password_hash=hash_password("TestPassword123"),
+            status=UserStatus.INACTIVE,
+            role=UserRole.EMPLOYEE,
+            department_id=department.id,
+        )
+        db.add(inactive_user)
+        db.commit()
+    finally:
+        db_generator.close()
+
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": "inactive.auth@example.com",
+            "password": "TestPassword123",
+        },
+    )
+    assert response.status_code == 401
