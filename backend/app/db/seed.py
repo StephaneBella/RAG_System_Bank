@@ -13,10 +13,9 @@ logger = logging.getLogger(__name__)
 
 DEPARTMENT_NAMES = [
     "Direction Générale",
-    "Conformité & Risques",
-    "Direction Juridique",
-    "Finances & Comptabilité",
-    "Ressources Humaines",
+    "Credit & Risques",
+    "Front Office",
+    "Conformité LBC/FT",
 ]
 
 ADMIN_DEPARTMENT_NAME = "Direction Générale"
