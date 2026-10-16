@@ -17,14 +17,16 @@ security-relevant backlog items are, and where to start.
 | Area | Status |
 |---|---|
 | Project structure, `uv` env, settings/secrets loading | ✅ Done |
-| Data model (4 tables) + initial Alembic migration | ✅ Done |
+| Data model + Alembic migrations (up to date) | ✅ Done |
 | Health endpoint (`GET /health`) | ✅ Done |
-| Authentication / JWT / sessions | ❌ Next sprint |
-| Authorization (role + department enforcement) | ❌ Next sprint |
-| Document endpoints & search | ❌ Next sprint |
-| Audit logging (writers) | ❌ Next sprint (model exists, nothing writes yet) |
-| Backend test suite | ❌ Cleared, being rebuilt (CI pytest step disabled) |
-| Frontend (React + Vite) | ❌ Not started (`frontend/` is empty) |
+| Authentication / JWT / sessions | ✅ Done |
+| Authorization (role + department enforcement) | ✅ Done |
+| User management + invitation flow | ✅ Done |
+| Document endpoints, search & file storage | ✅ Done |
+| Audit logging (writers + list/export API) | ✅ Done |
+| Backend test suite | ✅ Done (`uv run pytest`) |
+| Frontend (React + Vite + TypeScript) | ✅ Done (integrated against the real API) |
+| CI (Ruff + ESLint + pytest + build) | ✅ Done |
 
 Full backlog: [`docs/Sprint-Backlog.docx`](docs/Sprint-Backlog.docx) (French).
 
@@ -32,9 +34,9 @@ Full backlog: [`docs/Sprint-Backlog.docx`](docs/Sprint-Backlog.docx) (French).
 
 - **Backend:** FastAPI (Python 3.11+), SQLAlchemy 2.0, Alembic, PostgreSQL
 - **Config:** `pydantic-settings` + `backend/.env`
-- **Frontend:** React + Vite + TypeScript *(planned, not yet implemented)*
-- **Search:** PostgreSQL full-text search *(planned)*
-- **CI:** GitHub Actions — Ruff format + lint *(tests step currently disabled)*
+- **Frontend:** React + Vite + TypeScript (integrated against the real backend API)
+- **Search:** In-file index search over stored documents
+- **CI:** GitHub Actions — Ruff + ESLint + pytest + frontend build
 - **Tooling:** `uv` (dependency management), `ruff` (format/lint), `pytest`
 
 ---
