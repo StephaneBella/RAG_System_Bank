@@ -11,6 +11,7 @@ class AuditAction(str, Enum):
     LOGIN = "LOGIN"
     LOGOUT = "LOGOUT"
     DOCUMENT_VIEW = "DOCUMENT_VIEW"
+    DOCUMENT_SEARCH = "DOCUMENT_SEARCH"
     DOCUMENT_CREATE = "DOCUMENT_CREATE"
     DOCUMENT_UPDATE = "DOCUMENT_UPDATE"
     DOCUMENT_DELETE = "DOCUMENT_DELETE"
@@ -32,9 +33,9 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    user_id: Mapped[int] = mapped_column(
+    user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id"),
-        nullable=False,
+        nullable=True,
     )
 
     action: Mapped[str] = mapped_column(
@@ -47,8 +48,8 @@ class AuditLog(Base):
         nullable=False,
     )
 
-    resource_id: Mapped[int] = mapped_column(
-        nullable=False,
+    resource_id: Mapped[int | None] = mapped_column(
+        nullable=True,
     )
 
     result: Mapped[str] = mapped_column(
