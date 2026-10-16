@@ -117,7 +117,7 @@
   "library": {
     "title": "Mes documents",
     "subtitle": "Recherchez et consultez les documents associés à votre pôle.",
-    "searchPlaceholder": "Rechercher un document par mot-clé ou titre…",
+    "searchPlaceholder": "Rechercher par titre…",
     "visibilityLabel": "Visibilité",
     "allVisibilities": "Toutes les visibilités",
     "noResultsTitle": "Aucun document trouvé",

@@ -117,7 +117,7 @@
   "library": {
     "title": "My documents",
     "subtitle": "Search and browse the documents linked to your department.",
-    "searchPlaceholder": "Search a document by keyword or title…",
+    "searchPlaceholder": "Search by title…",
     "visibilityLabel": "Visibility",
     "allVisibilities": "All visibilities",
     "noResultsTitle": "No document found",
