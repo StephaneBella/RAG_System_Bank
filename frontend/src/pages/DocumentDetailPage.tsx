@@ -1,18 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router-dom';
 
 import { getErrorStatus } from '@/api/errors';
 import { AppShell } from '@/components/layout/AppShell';
-import { ClassificationBadge } from '@/components/ui/Badge';
+import { VisibilityBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { useDocument } from '@/hooks/useDocuments';
+import { Spinner } from '@/components/ui/Spinner';
+import { useDocument, useDocumentContent } from '@/hooks/useDocuments';
 import { useLocale } from '@/hooks/useLocale';
-import { fileExtension, formatDate, formatFileSize } from '@/lib/utils';
+import { downloadBlob, fileExtension, formatDate } from '@/lib/utils';
+
+function useObjectUrl(blob: Blob | undefined): string | undefined {
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    if (!blob) {
+      setUrl(undefined);
+      return;
+    }
+    const next = URL.createObjectURL(blob);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [blob]);
+  return url;
+}
 
 export function DocumentDetailPage(): JSX.Element {
   const { t } = useTranslation();
@@ -21,17 +36,19 @@ export function DocumentDetailPage(): JSX.Element {
   const id = Number(params.id);
   const { data: document, isLoading, isError, error } = useDocument(id);
 
-  const [page, setPage] = useState(1);
-  const [zoom, setZoom] = useState(100);
+  const extension = document ? fileExtension(document.file_path) : '';
+  const canPreview = extension === 'PDF';
+  const contentQuery = useDocumentContent(id, Boolean(document) && canPreview);
+  const objectUrl = useObjectUrl(contentQuery.data);
 
   if (isLoading) {
     return (
       <AppShell>
-        <div className="mx-auto w-full max-w-4xl px-6 py-4">
+        <div className="mx-auto w-full max-w-5xl px-6 py-4">
           <Skeleton className="mb-4 h-6 w-64" />
           <Card className="p-6">
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
-              <Skeleton className="h-[380px] w-full rounded-xl" />
+              <Skeleton className="h-[520px] w-full rounded-xl" />
               <div className="flex flex-col gap-3">
                 <Skeleton className="h-32 w-full rounded-xl" />
                 <Skeleton className="h-48 w-full rounded-xl" />
@@ -66,10 +83,16 @@ export function DocumentDetailPage(): JSX.Element {
     );
   }
 
+  const fileName = `${document.title}.${extension.toLowerCase() || 'pdf'}`;
+  const handleDownload = () => {
+    if (contentQuery.data) {
+      downloadBlob(contentQuery.data, fileName);
+    }
+  };
+
   const meta: { label: string; value: string }[] = [
     { label: t('document.reference'), value: `#${String(document.id).padStart(4, '0')}` },
-    { label: t('document.format'), value: fileExtension(document.file_name) || 'PDF' },
-    { label: t('document.size'), value: formatFileSize(document.file_size) },
+    { label: t('document.format'), value: extension || 'PDF' },
     { label: t('document.department'), value: document.department_name },
     { label: t('document.createdAt'), value: formatDate(document.created_at, locale) },
     { label: t('document.updatedAt'), value: formatDate(document.updated_at, locale) },
@@ -77,7 +100,7 @@ export function DocumentDetailPage(): JSX.Element {
 
   return (
     <AppShell>
-      <div className="mx-auto w-full max-w-4xl px-6 py-4">
+      <div className="mx-auto w-full max-w-5xl px-6 py-4">
         <div className="flex items-start justify-between gap-4 pb-4">
           <div className="flex min-w-0 flex-col">
             <Link
@@ -90,92 +113,73 @@ export function DocumentDetailPage(): JSX.Element {
             <h1 className="truncate font-headline-md text-headline-md font-bold text-primary">
               {document.title}
             </h1>
-            {document.description && (
-              <p className="font-body-sm text-body-sm text-on-surface-variant">
-                {document.description}
-              </p>
-            )}
           </div>
+          {contentQuery.data && (
+            <Button variant="secondary" icon="download" onClick={handleDownload}>
+              {t('document.download')}
+            </Button>
+          )}
         </div>
 
-        <Card className="overflow-hidden">
-          <div className="flex items-center justify-between gap-3 border-b border-surface-container bg-surface-container-low px-4 py-2.5">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPage((value) => Math.max(1, value - 1))}
-                className="flex h-8 w-8 items-center justify-center rounded bg-surface-container-lowest text-on-surface-variant transition-colors hover:bg-surface-container"
-                title={t('common.previous')}
-              >
-                <Icon name="chevron_left" className="text-[18px]" />
-              </button>
-              <span className="px-2 font-label-sm text-label-sm font-medium text-on-surface">
-                {t('document.page')} {page}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage((value) => value + 1)}
-                className="flex h-8 w-8 items-center justify-center rounded bg-surface-container-lowest text-on-surface-variant transition-colors hover:bg-surface-container"
-                title={t('common.next')}
-              >
-                <Icon name="chevron_right" className="text-[18px]" />
-              </button>
-            </div>
-            <div className="flex items-center gap-1 rounded bg-surface-container-lowest px-1">
-              <button
-                type="button"
-                onClick={() => setZoom((value) => Math.max(50, value - 10))}
-                title={t('document.zoomOut')}
-                className="flex h-7 w-7 items-center justify-center text-on-surface-variant hover:text-primary"
-              >
-                <Icon name="zoom_out" className="text-[18px]" />
-              </button>
-              <span className="px-2 font-mono text-code-mono font-semibold text-on-surface tabular">
-                {zoom}%
-              </span>
-              <button
-                type="button"
-                onClick={() => setZoom((value) => Math.min(200, value + 10))}
-                title={t('document.zoomIn')}
-                className="flex h-7 w-7 items-center justify-center text-on-surface-variant hover:text-primary"
-              >
-                <Icon name="zoom_in" className="text-[18px]" />
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-6 p-6 lg:grid-cols-[1fr_320px]">
-            <div className="flex min-h-[380px] flex-col items-center justify-center gap-3 rounded-xl border border-surface-container-high bg-surface-container-low p-8 text-center">
-              <Icon name="menu_book" className="text-[44px] text-primary" />
-              <p className="font-headline-sm text-headline-sm font-semibold text-on-surface">
-                {t('document.viewer')}
-              </p>
-            </div>
-
-            <aside className="flex flex-col gap-4">
-              <div className="flex flex-col gap-3 rounded-xl border border-hairline bg-surface-container-lowest p-4">
-                <div className="flex flex-wrap gap-2">
-                  <ClassificationBadge
-                    classification={document.classification}
-                    label={t(`classifications.${document.classification ?? 'private'}`)}
-                  />
-                </div>
-                <dl className="flex flex-col divide-y divide-surface-container-high">
-                  {meta.map((item) => (
-                    <div key={item.label} className="flex items-center justify-between gap-3 py-2">
-                      <dt className="font-label-sm text-label-sm uppercase tracking-wider text-faint">
-                        {item.label}
-                      </dt>
-                      <dd className="truncate font-body-sm text-body-sm text-on-surface">
-                        {item.value}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
+          <Card className="overflow-hidden p-0">
+            {canPreview && objectUrl ? (
+              <iframe
+                src={objectUrl}
+                title={document.title}
+                className="h-[75vh] w-full border-0 bg-white"
+              />
+            ) : canPreview && contentQuery.isLoading ? (
+              <div className="flex h-[520px] items-center justify-center gap-2 text-on-surface-variant">
+                <Spinner />
+                <span className="font-body-sm text-body-sm">{t('document.previewLoading')}</span>
               </div>
-            </aside>
-          </div>
-        </Card>
+            ) : canPreview ? (
+              <div className="flex h-[520px] flex-col items-center justify-center gap-3 p-8 text-center">
+                <Icon name="error" className="text-[40px] text-error" />
+                <p className="font-body-sm text-body-sm text-on-surface-variant">
+                  {t('document.previewError')}
+                </p>
+              </div>
+            ) : (
+              <div className="flex h-[520px] flex-col items-center justify-center gap-3 p-8 text-center">
+                <Icon name="description" className="text-[44px] text-primary" />
+                <p className="font-headline-sm text-headline-sm font-semibold text-on-surface">
+                  {document.title}
+                </p>
+                <p className="max-w-md font-body-sm text-body-sm text-on-surface-variant">
+                  {t('document.previewUnavailable')}
+                </p>
+                <Button variant="primary" icon="download" onClick={handleDownload}>
+                  {t('document.download')}
+                </Button>
+              </div>
+            )}
+          </Card>
+
+          <aside className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 rounded-xl border border-hairline bg-surface-container-lowest p-4">
+              <div className="flex flex-wrap gap-2">
+                <VisibilityBadge
+                  visibility={document.visibility}
+                  label={t(`visibilities.${document.visibility}`)}
+                />
+              </div>
+              <dl className="flex flex-col divide-y divide-surface-container-high">
+                {meta.map((item) => (
+                  <div key={item.label} className="flex items-center justify-between gap-3 py-2">
+                    <dt className="font-label-sm text-label-sm uppercase tracking-wider text-faint">
+                      {item.label}
+                    </dt>
+                    <dd className="truncate font-body-sm text-body-sm text-on-surface">
+                      {item.value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          </aside>
+        </div>
       </div>
     </AppShell>
   );

@@ -18,7 +18,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useAudit } from '@/hooks/useAudit';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useLocale } from '@/hooks/useLocale';
-import { formatDateTime } from '@/lib/utils';
+import { downloadBlob, formatDateTime } from '@/lib/utils';
 
 type Period = 'all' | 'today' | 'last7' | 'last30' | 'month';
 
@@ -27,6 +27,7 @@ const ACTIONS: AuditAction[] = [
   'LOGIN',
   'LOGOUT',
   'DOCUMENT_VIEW',
+  'DOCUMENT_SEARCH',
   'DOCUMENT_CREATE',
   'DOCUMENT_UPDATE',
   'DOCUMENT_DELETE',
@@ -75,14 +76,7 @@ export function AdminAuditPage(): JSX.Element {
     setExporting(true);
     try {
       const blob = await auditApi.exportAudit({ period, action, result, user_email: userEmailFilter });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'audit-log.csv';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, 'audit-log.csv');
       toast.success(t('admin.audit.exportDone'));
     } catch (error) {
       toast.error(getApiErrorMessage(error) ?? t('errors.generic'));
@@ -248,18 +242,16 @@ export function AdminAuditPage(): JSX.Element {
                     </td>
                     <td className="px-4 py-3">
                       <span className="font-body-table text-body-table text-on-surface-variant">
-                        {log.resource_label ?? `#${log.resource_id}`}
+                        {t(`resourceTypes.${log.resource_type}`, {
+                          defaultValue: log.resource_type,
+                        })}{' '}
+                        {log.resource_id !== null ? `#${log.resource_id}` : '—'}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-col">
-                        <span className="font-mono text-body-table text-on-surface-variant tabular">
-                          {log.ip_address ?? '—'}
-                        </span>
-                        <span className="font-body-table text-body-table text-on-surface-variant">
-                          {log.context ?? '—'}
-                        </span>
-                      </div>
+                      <span className="font-mono text-body-table text-on-surface-variant tabular">
+                        {log.ip_address ?? '—'}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <AuditResultBadge

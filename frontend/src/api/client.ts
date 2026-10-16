@@ -2,15 +2,7 @@ import axios, { type AxiosError } from 'axios';
 
 import { clearToken, getToken } from './tokenStore';
 
-const useMocks = import.meta.env.VITE_USE_MOCKS !== 'false';
-
-/**
- * When mocks are active we call same-origin relative paths so MSW can
- * intercept them without any CORS involvement. Otherwise we target the API.
- */
-export const API_BASE_URL = useMocks
-  ? ''
-  : (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000');
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,

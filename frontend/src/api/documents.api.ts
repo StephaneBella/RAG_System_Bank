@@ -1,18 +1,17 @@
 import { apiClient } from './client';
 import { endpoints } from './endpoints';
 import type {
-  Classification,
   DocumentItem,
   DocumentsQuery,
   Page,
   SearchDocumentsQuery,
+  Visibility,
 } from './types';
 
 export interface DocumentFormValues {
   title: string;
   department_id: number;
-  classification: Classification;
-  description?: string;
+  visibility: Visibility;
   file?: File | null;
 }
 
@@ -20,10 +19,7 @@ function toFormData(values: DocumentFormValues): FormData {
   const form = new FormData();
   form.append('title', values.title);
   form.append('department_id', String(values.department_id));
-  // The backend stores visibility in the file name; classification is the UI concept.
-  form.append('visibility', values.classification === 'public' ? 'public' : 'private');
-  form.append('classification', values.classification);
-  if (values.description) form.append('description', values.description);
+  form.append('visibility', values.visibility);
   if (values.file) form.append('file', values.file);
   return form;
 }
@@ -44,6 +40,13 @@ export async function searchDocuments(
 
 export async function getDocument(id: number): Promise<DocumentItem> {
   const { data } = await apiClient.get<DocumentItem>(endpoints.documents.get(id));
+  return data;
+}
+
+export async function getDocumentContent(id: number): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>(endpoints.documents.content(id), {
+    responseType: 'blob',
+  });
   return data;
 }
 

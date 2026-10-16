@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 
-import type { Classification, UserRole, UserStatus } from '@/api/types';
+import type { UserRole, UserStatus, Visibility } from '@/api/types';
 
 type BadgeTone = 'neutral' | 'primary' | 'success' | 'warning' | 'danger' | 'info';
 
@@ -37,20 +37,19 @@ export function Badge({
   );
 }
 
-const classificationTone: Record<Classification, BadgeTone> = {
+const visibilityTone: Record<Visibility, BadgeTone> = {
   public: 'neutral',
   private: 'primary',
-  confidential: 'warning',
 };
 
-export function ClassificationBadge({
-  classification,
+export function VisibilityBadge({
+  visibility,
   label,
 }: {
-  classification?: Classification;
+  visibility?: Visibility;
   label: string;
 }): JSX.Element {
-  return <Badge tone={classificationTone[classification ?? 'public']}>{label}</Badge>;
+  return <Badge tone={visibilityTone[visibility ?? 'private']}>{label}</Badge>;
 }
 
 export function RoleBadge({ role, label }: { role: UserRole; label: string }): JSX.Element {

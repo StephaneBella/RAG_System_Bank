@@ -19,25 +19,17 @@ const queryClient = new QueryClient({
   },
 });
 
-async function enableMocking(): Promise<void> {
-  if (import.meta.env.VITE_USE_MOCKS === 'false') return;
-  const { worker } = await import('./mocks/browser');
-  await worker.start({ onUnhandledRequest: 'bypass' });
-}
-
 const container = document.getElementById('root');
 if (!container) throw new Error('Root element #root not found');
 
-enableMocking().then(() => {
-  createRoot(container).render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <ToastProvider>
-            <App />
-          </ToastProvider>
-        </AuthProvider>
-      </QueryClientProvider>
-    </StrictMode>,
-  );
-});
+createRoot(container).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <ToastProvider>
+          <App />
+        </ToastProvider>
+      </AuthProvider>
+    </QueryClientProvider>
+  </StrictMode>,
+);

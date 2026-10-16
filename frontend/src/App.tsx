@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { FullPageLoader } from '@/components/layout/FullPageLoader';
 import { AdminLayout } from '@/components/layout/AdminLayout';
 import { landingPathFor, useAuth } from '@/context/AuthContext';
+import { AcceptInvitationPage } from '@/pages/AcceptInvitationPage';
 import { DocumentDetailPage } from '@/pages/DocumentDetailPage';
 import { ForbiddenPage } from '@/pages/ForbiddenPage';
 import { LibraryPage } from '@/pages/LibraryPage';
@@ -25,6 +26,7 @@ export function App(): JSX.Element {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
 
         <Route
           path="/library"

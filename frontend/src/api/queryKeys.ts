@@ -8,6 +8,7 @@ export const queryKeys = {
     list: (params: DocumentsQuery) => ['documents', 'list', params] as const,
     search: (params: SearchDocumentsQuery) => ['documents', 'search', params] as const,
     detail: (id: number) => ['documents', 'detail', id] as const,
+    content: (id: number) => ['documents', 'content', id] as const,
   },
   users: {
     all: ['users'] as const,

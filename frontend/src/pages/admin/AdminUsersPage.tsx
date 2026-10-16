@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { getApiErrorMessage } from '@/api/errors';
-import type { CreateUserRequest, User, UserRole } from '@/api/types';
+import type { CreateUserRequest, InvitationCreated, User, UserRole } from '@/api/types';
 import { RoleBadge, UserStatusBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useDebounce } from '@/hooks/useDebounce';
+import { InvitationLinkModal } from '@/components/users/InvitationLinkModal';
 import { UserActivityModal } from '@/components/users/UserActivityModal';
 import { UserFormModal } from '@/components/users/UserFormModal';
 import { useDepartments } from '@/hooks/useDepartments';
@@ -36,6 +37,7 @@ export function AdminUsersPage(): JSX.Element {
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [editor, setEditor] = useState<EditorState>(null);
   const [activityUser, setActivityUser] = useState<User | null>(null);
+  const [invitation, setInvitation] = useState<InvitationCreated | null>(null);
   const [serverError, setServerError] = useState<string | undefined>();
   const [updatingId, setUpdatingId] = useState<number | null>(null);
 
@@ -65,8 +67,9 @@ export function AdminUsersPage(): JSX.Element {
         await updateMutation.mutateAsync({ id: editor.user.id, payload });
         toast.success(t('admin.users.updatedToast'));
       } else {
-        await createMutation.mutateAsync(payload);
-        toast.success(t('admin.users.createdToast'));
+        const created = await createMutation.mutateAsync(payload);
+        setInvitation(created);
+        toast.success(t('admin.users.inviteSentToast'));
       }
       setEditor(null);
     } catch (error) {
@@ -314,6 +317,8 @@ export function AdminUsersPage(): JSX.Element {
       />
 
       <UserActivityModal user={activityUser} onClose={() => setActivityUser(null)} />
+
+      <InvitationLinkModal invitation={invitation} onClose={() => setInvitation(null)} />
     </div>
   );
 }

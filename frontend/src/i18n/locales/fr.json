@@ -53,10 +53,9 @@
     "ACTIVE": "Actif",
     "INACTIVE": "Inactif"
   },
-  "classifications": {
+  "visibilities": {
     "public": "Public",
-    "private": "Privé",
-    "confidential": "Confidentiel"
+    "private": "Privé"
   },
   "departments": {
     "Direction Générale": "Direction Générale",
@@ -69,6 +68,7 @@
     "LOGIN": "Connexion",
     "LOGOUT": "Déconnexion",
     "DOCUMENT_VIEW": "Consultation",
+    "DOCUMENT_SEARCH": "Recherche",
     "DOCUMENT_CREATE": "Création",
     "DOCUMENT_UPDATE": "Modification",
     "DOCUMENT_DELETE": "Suppression",
@@ -80,6 +80,11 @@
   "auditResults": {
     "SUCCESS": "Succès",
     "FAILURE": "Échec"
+  },
+  "resourceTypes": {
+    "DOCUMENT": "Document",
+    "USER": "Utilisateur",
+    "SESSION": "Session"
   },
   "auth": {
     "brand": "Coffre-fort Documentaire",
@@ -98,10 +103,7 @@
     "success": "Connexion réussie. Redirection…",
     "invalidCredentials": "Identifiant ou mot de passe invalide.",
     "sessionExpired": "Votre session a expiré. Veuillez vous reconnecter.",
-    "logoutSuccess": "Vous avez été déconnecté en toute sécurité.",
-    "demoHint": "Comptes de démonstration",
-    "demoAdmin": "Administrateur",
-    "demoEmployee": "Collaborateur"
+    "logoutSuccess": "Vous avez été déconnecté en toute sécurité."
   },
   "nav": {
     "adminConsole": "Console Administration",
@@ -116,32 +118,23 @@
     "title": "Mes documents",
     "subtitle": "Recherchez et consultez les documents associés à votre pôle.",
     "searchPlaceholder": "Rechercher un document par mot-clé ou titre…",
-    "classificationLabel": "Classification",
-    "allClassifications": "Toutes les classifications",
+    "visibilityLabel": "Visibilité",
+    "allVisibilities": "Toutes les visibilités",
     "noResultsTitle": "Aucun document trouvé",
     "noResultsHint": "Aucun document ne correspond à vos critères de recherche.",
     "resetFilters": "Réinitialiser les filtres",
-    "readOnlyTitle": "Aperçu du contenu",
-    "readOnlyBody": "Ce document est consultable en lecture seule dans votre espace sécurisé.",
-    "readingTitle": "Lecture du document",
-    "searching": "Recherche en cours…",
-    "departmentLabel": "Département"
+    "readOnlyBody": "Ce document est consultable en lecture seule dans votre espace sécurisé."
   },
   "document": {
-    "metadata": "Métadonnées",
     "format": "Format",
-    "size": "Taille",
     "reference": "Référence",
     "createdAt": "Ajouté le",
     "updatedAt": "Modifié le",
     "department": "Département",
-    "classification": "Classification",
-    "status": "Statut",
-    "viewer": "Visionneuse du document",
-    "page": "Page",
-    "of": "sur",
-    "zoomIn": "Zoom avant",
-    "zoomOut": "Zoom arrière",
+    "download": "Télécharger",
+    "previewLoading": "Chargement du document…",
+    "previewError": "Impossible de charger l'aperçu du document.",
+    "previewUnavailable": "L'aperçu n'est pas disponible pour ce format. Téléchargez le fichier pour le consulter.",
     "notFoundTitle": "Document introuvable",
     "notFoundBody": "Ce document n'existe pas ou n'est pas accessible depuis votre pôle.",
     "forbiddenTitle": "Accès refusé",
@@ -169,7 +162,7 @@
         "title": "Titre du document",
         "department": "Département",
         "date": "Dernière mise à jour",
-        "status": "Classification",
+        "status": "Visibilité",
         "actions": "Actions"
       },
       "newTitle": "Nouveau document",
@@ -177,11 +170,10 @@
       "formTitlePlaceholder": "Ex : Charte interne 2024",
       "formDepartment": "Département",
       "selectDepartment": "Sélectionner un département",
-      "formClassification": "Classification",
+      "formVisibility": "Visibilité",
       "formFile": "Fichier",
       "dropHint": "Glissez-déposez le fichier ou cliquez pour parcourir",
       "formatsHint": "Formats acceptés : PDF, DOCX (max 10 Mo)",
-      "formDescription": "Description optionnelle",
       "fileSelected": "Fichier sélectionné : {{name}}",
       "createdToast": "Document créé avec succès.",
       "updatedToast": "Document mis à jour avec succès.",
@@ -220,6 +212,7 @@
       "role": "Rôle",
       "department": "Département",
       "createdToast": "Utilisateur créé avec succès.",
+      "inviteSentToast": "Invitation envoyée. Le compte sera actif après acceptance du lien.",
       "updatedToast": "Utilisateur mis à jour avec succès.",
       "statusToast": "Statut de l'utilisateur mis à jour.",
       "activityTitle": "Historique d'activité",
@@ -228,7 +221,12 @@
       "downloadReport": "Télécharger le rapport",
       "accountActive": "Compte actif",
       "accountInactive": "Compte inactif",
-      "empty": "Aucun utilisateur pour ces critères."
+      "empty": "Aucun utilisateur pour ces critères.",
+      "inviteTitle": "Invitation envoyée",
+      "inviteSubtitle": "Transmettez ce lien à l'utilisateur. Il expirera le {{date}}.",
+      "inviteLinkLabel": "Lien d'invitation",
+      "copyLink": "Copier le lien",
+      "copiedLink": "Lien d'invitation copié dans le presse-papier"
     },
     "audit": {
       "title": "Journal d'audit et traçabilité",
@@ -270,6 +268,23 @@
     "emailRequired": "L'adresse email est requise.",
     "emailInvalid": "Adresse email invalide.",
     "passwordRequired": "Le mot de passe est requis.",
-    "required": "Ce champ est requis."
+    "required": "Ce champ est requis.",
+    "passwordTooShort": "Le mot de passe doit contenir au moins 12 caractères.",
+    "passwordMismatch": "Les mots de passe ne correspondent pas."
+  },
+  "invitation": {
+    "title": "Accepter votre invitation",
+    "subtitle": "Définissez votre mot de passe pour activer votre compte.",
+    "tokenLabel": "Jeton d'invitation",
+    "tokenPlaceholder": "Collez le jeton reçu",
+    "passwordLabel": "Nouveau mot de passe",
+    "passwordPlaceholder": "••••••••••••••••",
+    "confirmPasswordLabel": "Confirmer le mot de passe",
+    "confirmPasswordPlaceholder": "••••••••••••••••",
+    "submit": "Activer mon compte",
+    "submitting": "Activation…",
+    "success": "Compte activé. Vous pouvez maintenant vous connecter.",
+    "invalidToken": "Ce jeton d'invitation est invalide ou a expiré.",
+    "goToLogin": "Retour à la connexion"
   }
 }
