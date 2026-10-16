@@ -15,7 +15,7 @@ DEPARTMENT_NAMES = [
     "Direction Générale",
     "Credit & Risques",
     "Front Office",
-    "Conformité LBC/FT",
+    "Direction Conformité",
 ]
 
 ADMIN_DEPARTMENT_NAME = "Direction Générale"
