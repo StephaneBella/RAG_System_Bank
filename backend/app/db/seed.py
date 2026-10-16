@@ -12,13 +12,13 @@ from app.models.user import User, UserRole, UserStatus
 logger = logging.getLogger(__name__)
 
 DEPARTMENT_NAMES = [
-    "Direction Générale",
+    "Direction Generale",
     "Credit & Risques",
     "Front Office",
-    "Direction Conformité",
+    "Direction Conformite",
 ]
 
-ADMIN_DEPARTMENT_NAME = "Direction Générale"
+ADMIN_DEPARTMENT_NAME = "Direction Generale"
 
 
 def seed_departments(db: Session) -> int:
