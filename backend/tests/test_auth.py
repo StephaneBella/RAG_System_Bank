@@ -1,0 +1,286 @@
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+import app.models
+from app.core.security import hash_password
+from app.db.base import Base
+from app.db.session import get_db
+from app.main import app
+from app.models.audit_log import AuditAction, AuditLog, AuditResult, ResourceType
+from app.models.department import Department
+from app.models.user import User, UserRole, UserStatus
+
+
+@pytest.fixture
+def client():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSessionLocal = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+    Base.metadata.create_all(bind=engine)
+
+    with TestingSessionLocal() as db:
+        department = Department(name="Test Department")
+        db.add(department)
+        db.flush()
+
+        user = User(
+            email="auth.test@example.com",
+            password_hash=hash_password("TestPassword123"),
+            status=UserStatus.ACTIVE,
+            role=UserRole.ADMIN,
+            department_id=department.id,
+        )
+        db.add(user)
+        db.commit()
+
+    def override_get_db():
+        with TestingSessionLocal() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.state.testing_session_factory = TestingSessionLocal
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+    app.dependency_overrides.clear()
+    del app.state.testing_session_factory
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+def test_login_success(client):
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": "auth.test@example.com",
+            "password": "TestPassword123",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["token_type"] == "bearer"
+    assert response.json()["access_token"]
+
+
+def test_login_success_is_audited(client):
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": "auth.test@example.com",
+            "password": "TestPassword123",
+        },
+    )
+
+    assert response.status_code == 200
+
+    with client.app.state.testing_session_factory() as db:
+        events = db.scalars(select(AuditLog)).all()
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.action == AuditAction.LOGIN.value
+    assert event.resource_type == ResourceType.USER.value
+    assert event.resource_id == 1
+    assert event.result == AuditResult.SUCCESS.value
+    assert event.timestamp is not None
+
+
+def test_login_invalid_password(client):
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": "auth.test@example.com",
+            "password": "WrongPassword123",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid email or password"
+
+    with client.app.state.testing_session_factory() as db:
+        events = db.scalars(
+            select(AuditLog).where(AuditLog.action == AuditAction.LOGIN.value)
+        ).all()
+
+    assert len(events) == 1
+    assert events[0].user_id == 1
+    assert events[0].resource_type == ResourceType.USER.value
+    assert events[0].resource_id == 1
+    assert events[0].result == AuditResult.FAILURE.value
+    assert events[0].timestamp is not None
+
+
+def test_login_unknown_email_is_audited(client):
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": "unknown.user@example.com",
+            "password": "WrongPassword123",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid email or password"
+
+    with client.app.state.testing_session_factory() as db:
+        events = db.scalars(
+            select(AuditLog).where(AuditLog.action == AuditAction.LOGIN.value)
+        ).all()
+
+    assert len(events) == 1
+    assert events[0].user_id is None
+    assert events[0].resource_type == ResourceType.USER.value
+    assert events[0].resource_id is None
+    assert events[0].result == AuditResult.FAILURE.value
+    assert events[0].timestamp is not None
+
+
+def test_me_requires_authentication(client):
+    response = client.get("/auth/me")
+
+    assert response.status_code == 401
+
+
+def test_me_returns_authenticated_user(client):
+    login = client.post(
+        "/auth/login",
+        json={
+            "email": "auth.test@example.com",
+            "password": "TestPassword123",
+        },
+    )
+    token = login.json()["access_token"]
+
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "auth.test@example.com"
+    assert response.json()["role"] == "ADMIN"
+    assert response.json()["status"] == "ACTIVE"
+    assert response.json()["department_id"] == 1
+    assert response.json()["department_name"] == "Test Department"
+
+
+def test_logout_revokes_token(client):
+    login = client.post(
+        "/auth/login",
+        json={
+            "email": "auth.test@example.com",
+            "password": "TestPassword123",
+        },
+    )
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    logout = client.post("/auth/logout", headers=headers)
+
+    assert logout.status_code == 200
+
+    response = client.get("/auth/me", headers=headers)
+
+    assert response.status_code == 401
+
+
+def test_logout_is_audited(client):
+    login = client.post(
+        "/auth/login",
+        json={
+            "email": "auth.test@example.com",
+            "password": "TestPassword123",
+        },
+    )
+    token = login.json()["access_token"]
+
+    response = client.post(
+        "/auth/logout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+
+    with client.app.state.testing_session_factory() as db:
+        events = db.scalars(
+            select(AuditLog).where(AuditLog.action == AuditAction.LOGOUT.value)
+        ).all()
+
+    assert len(events) == 1
+    assert events[0].resource_type == ResourceType.USER.value
+    assert events[0].resource_id == 1
+    assert events[0].result == AuditResult.SUCCESS.value
+
+
+def test_me_rejects_invalid_token(client):
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": "Bearer invalid.token.value"},
+    )
+    assert response.status_code == 401
+
+
+def test_me_rejects_expired_token(client):
+    from datetime import UTC, datetime, timedelta
+
+    import jwt
+
+    from app.core.config import settings
+
+    expired_payload = {
+        "sub": "1",
+        "role": "ADMIN",
+        "iat": datetime.now(UTC) - timedelta(hours=2),
+        "exp": datetime.now(UTC) - timedelta(hours=1),
+        "jti": "expired-token-test",
+    }
+    token = jwt.encode(
+        expired_payload,
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 401
+
+
+def test_login_rejects_inactive_user(client):
+    from app.db.session import get_db
+
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        department = db.query(Department).filter_by(name="Test Department").first()
+        inactive_user = User(
+            email="inactive.auth@example.com",
+            password_hash=hash_password("TestPassword123"),
+            status=UserStatus.INACTIVE,
+            role=UserRole.EMPLOYEE,
+            department_id=department.id,
+        )
+        db.add(inactive_user)
+        db.commit()
+    finally:
+        db_generator.close()
+
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": "inactive.auth@example.com",
+            "password": "TestPassword123",
+        },
+    )
+    assert response.status_code == 401

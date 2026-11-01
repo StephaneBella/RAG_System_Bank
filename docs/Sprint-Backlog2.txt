@@ -1,0 +1,74 @@
+Le sprint N°2 utilise les user's stories 1, 2 et 7, puis les éléments de sécurité SEC-01 et SEC-02.
+
+- US 01: En tant qu'utilisateur, je veux accéder aux documents relatifs au problème que je rencontre  afin de retrouver l'information dont j'ai besoin.
+- US 02: En tant qu'utilisateur, je veux recevoir une proposition / recommandation pertinente de l'assistant.
+- US 07: Je souhaite, en tant qu’utilisateur, que mes données ne soient pas transférées au entreprises propriétaires des LLM.
+
+- SEC 01: Journalisation et audit — conserver et consulter les événements de sécurité afin de retracer les activités et détecter les comportements suspects.
+- SEC 02: Tests de sécurité — automatiser et exécuter les tests RBAC et de non-divulgation afin de vérifier que les contrôles sont respectés.
+
+
+I- LISTE DES TACHES POUR LES USER STORIES N°01 et N°02:
+
+I-1- PREPARATION DES DONNEES
+- Ingestion des données
+- Chunking avec métadonnées 
+- Vectorisation 
+- Storing et indexation
+
+I-2- RECUPERATION DES DONNEES
+- Définition des différentes stratégies de récupération.
+- Construction des tools pour les stratégies de récupérations choisies.
+
+I-3- AUGMENTATION 
+- Définition du système prompt.
+- Sérialisation de la taille du prompt après augmentation.
+
+I-4- GENERATION et FINALISATION DE L'APPLICATION
+- Construction du endpoint RAG Agentic
+- Test de l'API
+- Adaptation du frontend
+
+I-5- CONTRÔLE D'ACCÈS PAR COUCHE MÉTIER (dans le chat)
+Ajout d'un tiret : Définition et application des filtres d'accès par couche métier au moment de la récupération et de la génération.
+Un utilisateur d'une couche métier (Front office, Direction Crédit & Risques, Direction Conformité / LBC-FT) ne doit pas pouvoir 
+obtenir, via le chat, des informations relevant d'une autre couche métier.
+
+Sous-tâches :
+
+- Définition de la matrice couche métier × documents (métadonnées de classification par couche)
+- Implémentation du filtrage pré-retrieval par couche métier
+- Implémentation du filtrage post-retrieval (vérification avant envoi au LLM)
+- Tests de cloisonnement inter-couches (tentatives d'accès à une autre couche → refus + journalisation)
+
+
+
+II- LISTE DES TACHES POUR LA USER STORY 7:
+
+- Cartographie des données sensibles : identifier les données à ne jamais transmettre au LLM (noms, numéros de compte, identifiants clients, données RH, informations de conformité, éléments propres à une autre couche métier, etc.).
+- Définition de la politique de minimisation : établir les règles de ce qui est autorisé dans un prompt (données strictement nécessaires, extraits minimaux, absence de métadonnées sensibles).
+- Implémentation du module d’anonymisation / pseudonymisation avant appel API : filtrer et masquer les données sensibles directement dans l’application avant l’envoi du prompt au fournisseur LLM (regex, NER, mapping local sécurisé).
+- Minimisation du contexte RAG avant transmission au LLM : ne transmettre que les extraits de documents strictement nécessaires à la réponse, supprimer les métadonnées sensibles et vérifier le cloisonnement par couche métier.
+- Mise en place d’une passerelle applicative interne obligatoire : aucun appel direct au LLM depuis le frontend ; tous les appels passent par un service interne contrôlé, journalisé et filtrable.
+
+
+III- LISTE DES TACHES POUR LES ELEMENTS SEC-01 ET SEC-02
+
+SEC-01 — Journalisation et audit
+
+- Définition du format et du schéma des journaux (date, utilisateur, action, couche métier, documents accédés, résultat : autorisé / refusé)
+- Définition des événements à journaliser (connexions, déconnexions, recherches, accès documents, refus, tentatives d'accès interdit, temps de réponse)
+- Implémentation de la journalisation centralisée (collecte, stockage sécurisé, horodatage)
+- Mise en place de la consultation des journaux (interface / requêtes de filtrage par utilisateur, date, action, résultat)
+- Implémentation de la détection des comportements suspects (tentatives répétées d'accès interdit, pics d'accès anormaux)
+- Tests de journalisation : vérifier que chaque action est bien enregistrée et consultable
+
+SEC-02 — Tests de sécurité
+
+- Élaboration de la matrice des droits (rôles / couches métiers × documents × actions)
+- Écriture des scénarios de tests RBAC (accès autorisé, accès interdit, accès par couche métier)
+- Automatisation des tests RBAC (scripts rejouables et vérifiables)
+- Écriture et exécution des tests de non-divulgation (aucun document interdit transmis au LLM, résistance au prompt injection)
+- Écriture et exécution des tests de cloisonnement inter-couches métier (aucune information d'une autre couche accessible via le chat)
+- Rapport de tests de sécurité (contrôles vérifiés, résultats, limites restantes)
+
