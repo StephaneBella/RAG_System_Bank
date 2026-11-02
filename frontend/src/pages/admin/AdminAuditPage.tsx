@@ -3,12 +3,13 @@ import { useTranslation } from 'react-i18next';
 
 import { getApiErrorMessage } from '@/api/errors';
 import { auditApi } from '@/api';
-import type { AuditAction, AuditResult } from '@/api/types';
+import { AUDIT_ACTIONS, type AuditAction, type AuditResult } from '@/api/types';
 import { AuditResultBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
+import { Input } from '@/components/ui/Input';
 import { Pagination } from '@/components/ui/Pagination';
 import { SearchInput } from '@/components/ui/SearchInput';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -23,19 +24,6 @@ import { downloadBlob, formatDateTime } from '@/lib/utils';
 type Period = 'all' | 'today' | 'last7' | 'last30' | 'month';
 
 const PAGE_SIZE = 20;
-const ACTIONS: AuditAction[] = [
-  'LOGIN',
-  'LOGOUT',
-  'DOCUMENT_VIEW',
-  'DOCUMENT_SEARCH',
-  'DOCUMENT_CREATE',
-  'DOCUMENT_UPDATE',
-  'DOCUMENT_DELETE',
-  'USER_CREATE',
-  'USER_UPDATE',
-  'USER_STATUS_UPDATE',
-  'EXPORT',
-];
 const RESULTS: AuditResult[] = ['SUCCESS', 'FAILURE'];
 
 const PERIODS: { value: Period; labelKey: string }[] = [
@@ -56,26 +44,30 @@ export function AdminAuditPage(): JSX.Element {
   const [action, setAction] = useState<AuditAction | 'ALL'>('ALL');
   const [result, setResult] = useState<AuditResult | 'ALL'>('ALL');
   const [userEmail, setUserEmail] = useState('');
+  // Custom day range (YYYY-MM-DD); both bounds are inclusive.
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [exporting, setExporting] = useState(false);
 
   const debouncedUserEmail = useDebounce(userEmail, 300);
   const userEmailFilter = debouncedUserEmail.trim() || undefined;
 
-  const queryParams = {
-    page,
-    page_size: PAGE_SIZE,
+  const filters = {
     period,
     action,
     result,
     user_email: userEmailFilter,
+    date_from: dateFrom ? `${dateFrom}T00:00:00` : undefined,
+    date_to: dateTo ? `${dateTo}T23:59:59.999999` : undefined,
   };
+  const queryParams = { page, page_size: PAGE_SIZE, ...filters };
   const auditQuery = useAudit(queryParams);
   const rows = auditQuery.data?.items ?? [];
 
   const handleExport = async () => {
     setExporting(true);
     try {
-      const blob = await auditApi.exportAudit({ period, action, result, user_email: userEmailFilter });
+      const blob = await auditApi.exportAudit(filters);
       downloadBlob(blob, 'audit-log.csv');
       toast.success(t('admin.audit.exportDone'));
     } catch (error) {
@@ -112,6 +104,9 @@ export function AdminAuditPage(): JSX.Element {
             value={period}
             onChange={(value) => {
               setPeriod(value);
+              // A preset period, "all dates" included, replaces the custom date range.
+              setDateFrom('');
+              setDateTo('');
               setPage(1);
             }}
             options={PERIODS.map((item) => ({
@@ -141,9 +136,9 @@ export function AdminAuditPage(): JSX.Element {
             aria-label={t('admin.audit.columns.event')}
           >
             <option value="ALL">{t('admin.audit.allEvents')}</option>
-            {ACTIONS.map((value) => (
+            {AUDIT_ACTIONS.map((value) => (
               <option key={value} value={value}>
-                {t(`auditActions.${value}`)}
+                {t(`auditActions.${value}`, { defaultValue: value })}
               </option>
             ))}
           </Select>
@@ -163,6 +158,37 @@ export function AdminAuditPage(): JSX.Element {
               </option>
             ))}
           </Select>
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="sm:w-48">
+            <Input
+              id="audit-date-from"
+              type="date"
+              label={t('admin.audit.dateFrom')}
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={(event) => {
+                setDateFrom(event.target.value);
+                // A custom date range replaces the preset period.
+                setPeriod('all');
+                setPage(1);
+              }}
+            />
+          </div>
+          <div className="sm:w-48">
+            <Input
+              id="audit-date-to"
+              type="date"
+              label={t('admin.audit.dateTo')}
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(event) => {
+                setDateTo(event.target.value);
+                setPeriod('all');
+                setPage(1);
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -231,13 +257,13 @@ export function AdminAuditPage(): JSX.Element {
                     </td>
                     <td className="px-4 py-3">
                       <span className="font-body-table text-body-table font-medium text-on-surface">
-                        {log.user_email}
+                        {log.user_email ?? t('admin.audit.anonymous')}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 font-body-table text-body-table font-medium text-on-surface">
                         <Icon name="bolt" className="text-[16px] text-primary" />
-                        {t(`auditActions.${log.action}`)}
+                        {t(`auditActions.${log.action}`, { defaultValue: log.action })}
                       </span>
                     </td>
                     <td className="px-4 py-3">
