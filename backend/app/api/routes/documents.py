@@ -222,11 +222,12 @@ def _get_accessible_document(
 
     document = _parsed_document(entry["file_name"], document_id)
     if user.role != UserRole.ADMIN:
+        # Strict business-layer isolation: visibility never grants cross-department access.
         same_department = (
             user.department is not None
             and document.department_token == sanitize_department_token(user.department.name)
         )
-        if document.visibility != "public" and not same_department:
+        if not same_department:
             _audit(db, user, AuditAction.DOCUMENT_VIEW, AuditResult.FAILURE, request, document_id)
             db.commit()
             raise HTTPException(

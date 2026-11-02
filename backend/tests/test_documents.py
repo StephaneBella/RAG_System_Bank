@@ -173,17 +173,14 @@ def test_invalid_pagination_and_sort_are_rejected(document_context):
     )
 
 
-def test_employee_sees_public_and_own_department_private_documents(document_context):
+def test_employee_sees_only_own_department_documents(document_context):
     env = document_context
     response = env["client"].get("/documents/get_all", headers=env["headers"]("employee_a"))
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] == 3
+    assert body["total"] == 2
     titles = {item["title"] for item in body["items"]}
-    assert "Alpha Report" in titles
-    assert "Beta Notes" in titles
-    assert "Secret Report" in titles
-    assert "Confidential Report" not in titles
+    assert titles == {"Alpha Report", "Beta Notes"}
 
 
 def test_employee_cannot_view_private_document_from_another_department(document_context):
@@ -201,14 +198,46 @@ def test_employee_cannot_view_private_document_from_another_department(document_
     assert event.result == AuditResult.FAILURE.value
 
 
-def test_search_respects_visibility_and_department_scope_and_is_audited(document_context):
+@pytest.mark.parametrize("suffix", ["", "/content"])
+def test_employee_cannot_access_public_document_from_another_department(document_context, suffix):
+    env = document_context
+    document_id = _document_ids(env)["Secret Report"]
+    response = env["client"].get(
+        f"/documents/{document_id}{suffix}", headers=env["headers"]("employee_a")
+    )
+    assert response.status_code == 403
+    event = _audit_event(
+        env,
+        AuditAction.DOCUMENT_VIEW,
+        user_id=env["ids"]["employee_a"],
+        resource_id=document_id,
+    )
+    assert event is not None
+    assert event.result == AuditResult.FAILURE.value
+
+
+@pytest.mark.parametrize("suffix", ["", "/content"])
+def test_employee_can_access_own_department_documents(document_context, suffix):
+    env = document_context
+    document_id = _document_ids(env)["Beta Notes"]
+    response = env["client"].get(
+        f"/documents/{document_id}{suffix}", headers=env["headers"]("employee_a")
+    )
+    assert response.status_code == 200
+
+
+def test_search_respects_department_scope_and_is_audited(document_context):
     env = document_context
     employee = env["headers"]("employee_a")
     admin = env["headers"]("admin")
 
     response = env["client"].get("/documents/search_document?q=secret", headers=employee)
     assert response.status_code == 200
-    assert response.json()["total"] == 1
+    assert response.json()["total"] == 0
+    assert (
+        env["client"].get("/documents/search_document?q=alpha", headers=employee).json()["total"]
+        == 1
+    )
     assert (
         env["client"]
         .get("/documents/search_document?q=confidential", headers=employee)
