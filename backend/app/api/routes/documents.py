@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_current_user
 from app.db.session import get_db
 from app.models import Department, User
-from app.models.audit_log import AuditAction, AuditResult, ResourceType
+from app.models.audit_log import AuditAction, AuditReason, AuditResult, ResourceType
 from app.models.user import UserRole
 from app.schemas.document import CreateDocumentRequest, DocumentResponse
 from app.schemas.pagination import Page
@@ -71,6 +71,10 @@ def _audit(
     result: AuditResult,
     request: Request,
     resource_id: int | None = None,
+    *,
+    resource_department_id: int | None = None,
+    reason: AuditReason | None = None,
+    document_ids: list[int] | None = None,
 ) -> None:
     log_audit_event(
         db,
@@ -80,6 +84,9 @@ def _audit(
         resource_id=resource_id,
         result=result,
         ip_address=_ip(request),
+        resource_department_id=resource_department_id,
+        reason=reason,
+        document_ids=document_ids,
     )
 
 
@@ -93,7 +100,15 @@ def _require_permission(
 ) -> None:
     allowed = ROLE_PERMISSIONS.get(user.role, set())
     if permission not in allowed:
-        _audit(db, user, action, AuditResult.FAILURE, request, resource_id)
+        _audit(
+            db,
+            user,
+            action,
+            AuditResult.FAILURE,
+            request,
+            resource_id,
+            reason=AuditReason.ROLE_FORBIDDEN,
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -106,6 +121,17 @@ def _department_map(db: Session) -> dict[str, Department]:
         sanitize_department_token(department.name): department
         for department in db.scalars(select(Department)).all()
     }
+
+
+def _department_id_of(db: Session, document: StoredDocument | None) -> int | None:
+    """Department of a library document, resolved with the same exact-token rule as the API.
+
+    None when the token matches no department: no mapping is guessed.
+    """
+    if document is None:
+        return None
+    department = _department_map(db).get(document.department_token)
+    return department.id if department else None
 
 
 def _to_response(doc: StoredDocument, departments: dict[str, Department]) -> DocumentResponse:
@@ -224,7 +250,16 @@ def _get_accessible_document(
             and document.department_token == sanitize_department_token(user.department.name)
         )
         if not same_department:
-            _audit(db, user, AuditAction.DOCUMENT_VIEW, AuditResult.FAILURE, request, document_id)
+            _audit(
+                db,
+                user,
+                AuditAction.DOCUMENT_VIEW,
+                AuditResult.FAILURE,
+                request,
+                document_id,
+                resource_department_id=_department_id_of(db, document),
+                reason=AuditReason.DEPARTMENT_FORBIDDEN,
+            )
             db.commit()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -261,7 +296,15 @@ def get_document(
 ):
     _require_permission(db, current_user, "read", AuditAction.DOCUMENT_VIEW, request, document_id)
     document = _get_accessible_document(db, document_id, current_user, request)
-    _audit(db, current_user, AuditAction.DOCUMENT_VIEW, AuditResult.SUCCESS, request, document.id)
+    _audit(
+        db,
+        current_user,
+        AuditAction.DOCUMENT_VIEW,
+        AuditResult.SUCCESS,
+        request,
+        document.id,
+        resource_department_id=_department_id_of(db, document),
+    )
     db.commit()
     return _to_response(document, _department_map(db))
 
@@ -277,14 +320,29 @@ def get_document_content(
     document = _get_accessible_document(db, document_id, current_user, request)
 
     file_path = document_path(document.file_name)
+    resource_department_id = _department_id_of(db, document)
     if not file_path.is_file():
         _audit(
-            db, current_user, AuditAction.DOCUMENT_VIEW, AuditResult.FAILURE, request, document_id
+            db,
+            current_user,
+            AuditAction.DOCUMENT_VIEW,
+            AuditResult.FAILURE,
+            request,
+            document_id,
+            resource_department_id=resource_department_id,
         )
         db.commit()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
 
-    _audit(db, current_user, AuditAction.DOCUMENT_VIEW, AuditResult.SUCCESS, request, document.id)
+    _audit(
+        db,
+        current_user,
+        AuditAction.DOCUMENT_VIEW,
+        AuditResult.SUCCESS,
+        request,
+        document.id,
+        resource_department_id=resource_department_id,
+    )
     db.commit()
     return FileResponse(
         path=file_path,
@@ -346,7 +404,15 @@ def create_document(
     save_index(index)
 
     document = _parsed_document(stored_name, document_id)
-    _audit(db, current_user, AuditAction.DOCUMENT_CREATE, AuditResult.SUCCESS, request, document_id)
+    _audit(
+        db,
+        current_user,
+        AuditAction.DOCUMENT_CREATE,
+        AuditResult.SUCCESS,
+        request,
+        document_id,
+        resource_department_id=_department_id_of(db, document),
+    )
     db.commit()
     return _to_response(document, _department_map(db))
 
@@ -434,7 +500,15 @@ def update_document(
         ) from None
 
     document = _parsed_document(new_stored_name, document_id)
-    _audit(db, current_user, AuditAction.DOCUMENT_UPDATE, AuditResult.SUCCESS, request, document_id)
+    _audit(
+        db,
+        current_user,
+        AuditAction.DOCUMENT_UPDATE,
+        AuditResult.SUCCESS,
+        request,
+        document_id,
+        resource_department_id=_department_id_of(db, document),
+    )
     db.commit()
     return _to_response(document, _department_map(db))
 
@@ -460,6 +534,7 @@ def delete_document(
             status_code=status.HTTP_404_NOT_FOUND, detail="Requested document does not exist"
         )
 
+    deleted_department_id = _department_id_of(db, parse_stored_name(entry["file_name"]))
     try:
         remove_document_file(entry["file_name"])
         index["documents"] = [doc for doc in index["documents"] if doc["id"] != document_id]
@@ -474,7 +549,15 @@ def delete_document(
             detail="Could not delete the document file",
         ) from None
 
-    _audit(db, current_user, AuditAction.DOCUMENT_DELETE, AuditResult.SUCCESS, request, document_id)
+    _audit(
+        db,
+        current_user,
+        AuditAction.DOCUMENT_DELETE,
+        AuditResult.SUCCESS,
+        request,
+        document_id,
+        resource_department_id=deleted_department_id,
+    )
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -507,6 +590,14 @@ def search_documents(
     matches = _apply_sort(matches, sort_by, order)
     page_items, total, pages = _slice(matches, page, page_size)
     items = [_to_response(doc, departments) for doc in page_items]
-    _audit(db, current_user, AuditAction.DOCUMENT_SEARCH, AuditResult.SUCCESS, request)
+    # Only the ids of the returned page; the search text is never stored.
+    _audit(
+        db,
+        current_user,
+        AuditAction.DOCUMENT_SEARCH,
+        AuditResult.SUCCESS,
+        request,
+        document_ids=[doc.id for doc in page_items],
+    )
     db.commit()
     return _build_page(items, total, page, page_size, pages)

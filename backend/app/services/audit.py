@@ -1,9 +1,13 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Select, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.engine import Row
+from sqlalchemy.orm import Session, aliased
 
-from app.models.audit_log import AuditAction, AuditLog, AuditResult, ResourceType
+from app.core.request_timing import elapsed_ms
+from app.models.audit_log import AuditAction, AuditLog, AuditReason, AuditResult, ResourceType
+from app.models.department import Department
 from app.models.user import User
 from app.schemas.audit import AuditLogResponse
 from app.schemas.pagination import Page
@@ -18,8 +22,20 @@ def log_audit_event(
     resource_id: int | None,
     result: AuditResult,
     ip_address: str | None = None,
+    resource_department_id: int | None = None,
+    reason: AuditReason | None = None,
+    document_ids: Sequence[int] | None = None,
 ) -> None:
-    """Persist an audit event without storing credentials or tokens."""
+    """Persist an audit event without storing credentials or tokens.
+
+    details is built from an enum and integer ids only, so it can never hold free text.
+    """
+    details: dict[str, object] = {}
+    if reason is not None:
+        details["reason"] = reason.value
+    if document_ids is not None:
+        details["document_ids"] = [int(document_id) for document_id in document_ids]
+
     event = AuditLog(
         user_id=user.id if user is not None else None,
         action=action.value,
@@ -28,12 +44,40 @@ def log_audit_event(
         result=result.value,
         timestamp=datetime.now(UTC).replace(tzinfo=None),
         ip_address=ip_address,
+        user_department_id=user.department_id if user is not None else None,
+        resource_department_id=resource_department_id,
+        duration_ms=elapsed_ms(),
+        details=details or None,
     )
     db.add(event)
     db.flush()
 
 
 PERIODS = {"today", "last7", "last30", "month"}
+
+UserDepartment = aliased(Department)
+ResourceDepartment = aliased(Department)
+
+
+def _to_response(row: Row) -> AuditLogResponse:
+    log, email, user_department_name, resource_department_name = row
+    return AuditLogResponse(
+        id=log.id,
+        user_id=log.user_id,
+        user_email=email,
+        action=log.action,
+        resource_type=log.resource_type,
+        resource_id=log.resource_id,
+        result=log.result,
+        ip_address=log.ip_address,
+        timestamp=log.timestamp,
+        user_department_id=log.user_department_id,
+        user_department_name=user_department_name,
+        resource_department_id=log.resource_department_id,
+        resource_department_name=resource_department_name,
+        duration_ms=log.duration_ms,
+        details=log.details,
+    )
 
 
 def _period_start(period: str | None) -> datetime | None:
@@ -58,7 +102,12 @@ def _base_query(
     date_from: datetime | None,
     date_to: datetime | None,
 ) -> Select:
-    query = select(AuditLog, User.email).outerjoin(User, AuditLog.user_id == User.id)
+    query = (
+        select(AuditLog, User.email, UserDepartment.name, ResourceDepartment.name)
+        .outerjoin(User, AuditLog.user_id == User.id)
+        .outerjoin(UserDepartment, AuditLog.user_department_id == UserDepartment.id)
+        .outerjoin(ResourceDepartment, AuditLog.resource_department_id == ResourceDepartment.id)
+    )
     if action:
         query = query.where(AuditLog.action == action)
     if result:
@@ -105,20 +154,7 @@ def list_audit_logs(
         .limit(page_size)
     ).all()
 
-    items = [
-        AuditLogResponse(
-            id=log.id,
-            user_id=log.user_id,
-            user_email=email,
-            action=log.action,
-            resource_type=log.resource_type,
-            resource_id=log.resource_id,
-            result=log.result,
-            ip_address=log.ip_address,
-            timestamp=log.timestamp,
-        )
-        for log, email in rows
-    ]
+    items = [_to_response(row) for row in rows]
 
     pages = (total + page_size - 1) // page_size if total else 0
     return Page[AuditLogResponse](
@@ -152,17 +188,4 @@ def export_audit_logs(
             date_to=date_to,
         ).order_by(AuditLog.timestamp.desc(), AuditLog.id.desc())
     ).all()
-    return [
-        AuditLogResponse(
-            id=log.id,
-            user_id=log.user_id,
-            user_email=email,
-            action=log.action,
-            resource_type=log.resource_type,
-            resource_id=log.resource_id,
-            result=log.result,
-            ip_address=log.ip_address,
-            timestamp=log.timestamp,
-        )
-        for log, email in rows
-    ]
+    return [_to_response(row) for row in rows]

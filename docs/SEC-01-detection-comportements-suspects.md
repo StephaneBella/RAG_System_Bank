@@ -99,14 +99,54 @@ L'historique n'est chargé que pour les utilisateurs dont `p(u) ≥ N_min`.
 Migration `3a6cb1fbc969` : index `ix_audit_logs_timestamp` sur
 `audit_logs.timestamp` (non destructive), utilisé par les requêtes par période.
 
+## Format du journal
+
+Migration `433466e39163` (non destructive : colonnes nullables, lignes existantes
+inchangées). Champs ajoutés à `audit_logs`, exposés par `GET /audit` et l'export CSV :
+
+| Champ | Contenu |
+|---|---|
+| `user_department_id` | Département de l'**utilisateur** au moment de l'événement (instantané, conservé s'il change ensuite de département) ; `NULL` pour un événement anonyme. Pour un `LOGIN` en échec, il s'agit du département du **compte visé** (comme `user_id`), pas nécessairement de celui de l'auteur réel de la tentative ; `NULL` si l'email est inconnu. |
+| `resource_department_id` | Département du **document concerné**, uniquement quand la route a identifié le document et que le jeton de département de son nom de fichier correspond exactement à un département en base (règle existante de la bibliothèque) ; sinon `NULL`. Jamais déduit de l'utilisateur. |
+| `duration_ms` | Temps écoulé entre la réception de la requête et l'écriture de l'événement (middleware `RequestTimingMiddleware`) ; `NULL` hors requête HTTP. |
+| `details` | JSON structuré uniquement : `reason` (motif de refus) et/ou `document_ids` (identifiants des documents de la page renvoyée par une recherche). Aucun texte libre, aucun texte de recherche, aucun contenu. |
+
+`resource_department_id` est renseigné pour `DOCUMENT_VIEW` sur un document identifié
+(succès, refus `DEPARTMENT_FORBIDDEN`, fichier absent) et pour les `DOCUMENT_CREATE`,
+`DOCUMENT_UPDATE` (département après modification) et `DOCUMENT_DELETE` réussis.
+
+Motifs de refus (`AuditReason`, liste fermée) :
+
+| Motif | Événement |
+|---|---|
+| `MISSING_TOKEN` | `TOKEN_MISSING` |
+| `INVALID_TOKEN` | `AUTHENTICATION_FAILED` (jeton invalide ou falsifié) |
+| `EXPIRED_TOKEN` | `SESSION_EXPIRED` |
+| `REVOKED_TOKEN` | `AUTHENTICATION_FAILED` (jeton révoqué) |
+| `INACTIVE_OR_UNKNOWN_USER` | `AUTHENTICATION_FAILED` (compte inactif ou supprimé) |
+| `ROLE_FORBIDDEN` | `ACCESS_DENIED`, `DOCUMENT_CREATE/UPDATE/DELETE` refusés au rôle |
+| `DEPARTMENT_FORBIDDEN` | `DOCUMENT_VIEW` d'un document d'un autre département |
+| `INVALID_CREDENTIALS` | `LOGIN` en échec (email inconnu, mauvais mot de passe ou compte inactif, non distingués) |
+
+Les couches de l'ingestion RAG (`business_layer`) ne sont **pas** reliées aux
+départements : leurs identifiants diffèrent (`credit_risques` / `Credit & Risques`,
+`conformite_lbc_ft` / `Direction Conformite`) et aucune correspondance n'est définie.
+
 ## Limites
+
+- `duration_ms` mesure le traitement jusqu'à l'écriture de l'événement : la
+  transmission du fichier de `/documents/{id}/content` n'est pas incluse.
+- `resource_department_id` reflète le département du document au moment de
+  l'événement selon l'index courant ; un document sans correspondance exacte
+  reste à `NULL`.
 
 - Détection uniquement : ni blocage, ni notification, ni acquittement ; une
   alerte disparaît quand ses événements sortent de la période d'analyse.
 - Rôle et département **actuels** de l'utilisateur ; département **actuel** du
   document (un document déplacé depuis l'événement peut être mal attribué).
-- IP issue de `request.client.host` : derrière un reverse proxy, les règles
-  par IP perdent leur sens. La déconnexion n'enregistre pas d'IP.
+- IP issue de `request.client.host` (`NULL` si l'adresse du client est
+  indisponible), déconnexion comprise depuis SEC-01 T1/T2 : derrière un reverse
+  proxy, les règles par IP perdent leur sens.
 - Seuils empiriques, à ajuster en recette ; R5 peut être contourné par une
   montée progressive de l'activité.
 - R1a et R1b peuvent produire deux alertes (compte et IP) pour une même rafale ;

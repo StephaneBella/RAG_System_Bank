@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import JSON, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -37,6 +37,19 @@ class ResourceType(str, Enum):
 class AuditResult(str, Enum):
     SUCCESS = "SUCCESS"
     FAILURE = "FAILURE"
+
+
+class AuditReason(str, Enum):
+    """Closed list of refusal reasons: details never hold free text."""
+
+    MISSING_TOKEN = "MISSING_TOKEN"
+    INVALID_TOKEN = "INVALID_TOKEN"
+    EXPIRED_TOKEN = "EXPIRED_TOKEN"
+    REVOKED_TOKEN = "REVOKED_TOKEN"
+    INACTIVE_OR_UNKNOWN_USER = "INACTIVE_OR_UNKNOWN_USER"
+    ROLE_FORBIDDEN = "ROLE_FORBIDDEN"
+    DEPARTMENT_FORBIDDEN = "DEPARTMENT_FORBIDDEN"
+    INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
 
 
 class AuditLog(Base):
@@ -76,5 +89,27 @@ class AuditLog(Base):
 
     ip_address: Mapped[str] = mapped_column(
         String(45),
+        nullable=True,
+    )
+
+    # Department of the acting user when the event happened.
+    user_department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("departments.id"),
+        nullable=True,
+    )
+
+    # Department of the document concerned, only when the library resolves it exactly.
+    resource_department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("departments.id"),
+        nullable=True,
+    )
+
+    duration_ms: Mapped[int | None] = mapped_column(
+        nullable=True,
+    )
+
+    # Structured only: {"reason": AuditReason} and/or {"document_ids": [int, ...]}.
+    details: Mapped[dict | None] = mapped_column(
+        JSON,
         nullable=True,
     )

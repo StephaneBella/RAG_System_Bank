@@ -15,9 +15,10 @@ from app.core.security import create_access_token, hash_password
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-from app.models.audit_log import AuditAction, AuditLog, AuditResult, ResourceType
+from app.models.audit_log import AuditAction, AuditLog, AuditReason, AuditResult, ResourceType
 from app.models.department import Department
 from app.models.user import User, UserRole, UserStatus
+from app.services.audit import log_audit_event
 
 
 @pytest.fixture
@@ -111,6 +112,12 @@ def test_audit_lists_events_with_metadata(audit_context):
         "result",
         "ip_address",
         "timestamp",
+        "user_department_id",
+        "user_department_name",
+        "resource_department_id",
+        "resource_department_name",
+        "duration_ms",
+        "details",
     }
     assert first["action"] == "LOGIN"
     assert first["resource_type"] == ResourceType.USER.value
@@ -437,3 +444,195 @@ def test_audit_filters_on_refusal_actions(audit_context):
         response = env["client"].get(f"/audit?action={action}", headers=admin)
         assert response.status_code == 200
         assert response.json()["total"] == 1
+
+
+# --- SEC-01 T1/T2: departments, response time, reasons, logout IP ---------------------
+
+
+def _department_of(env, user_key):
+    with env["session_factory"]() as db:
+        return db.get(User, env["ids"][user_key]).department_id
+
+
+def _login(env, email, password="Password123"):
+    return env["client"].post("/auth/login", json={"email": email, "password": password})
+
+
+def test_events_record_the_user_department_and_no_resource_department(audit_context):
+    env = audit_context
+    _login(env, "employee@example.com")
+    [event] = _events(env)
+    assert event.user_department_id == _department_of(env, "employee")
+    assert event.resource_department_id is None
+    assert event.details is None
+
+
+def test_anonymous_events_have_no_department(audit_context):
+    env = audit_context
+    env["client"].get("/audit")
+    _login(env, "nobody@example.com")
+    for event in _events(env):
+        assert event.user_id is None
+        assert event.user_department_id is None
+
+
+def test_user_department_is_a_snapshot_of_the_event_time(audit_context):
+    env = audit_context
+    first_department = _department_of(env, "employee")
+    _login(env, "employee@example.com")
+    with env["session_factory"]() as db:
+        risks = Department(name="Credit & Risques")
+        db.add(risks)
+        db.flush()
+        db.get(User, env["ids"]["employee"]).department_id = risks.id
+        db.commit()
+        risks_id = risks.id
+    _login(env, "employee@example.com")
+
+    first, second = _events(env, AuditAction.LOGIN)
+    assert first.user_department_id == first_department
+    assert second.user_department_id == risks_id
+
+
+def test_response_time_is_recorded_for_api_events(audit_context):
+    env = audit_context
+    _login(env, "employee@example.com")
+    env["client"].get("/audit")
+    env["client"].get("/audit", headers=env["headers"]("employee"))
+    events = _events(env)
+    assert len(events) == 3
+    for event in events:
+        assert isinstance(event.duration_ms, int)
+        assert event.duration_ms >= 0
+
+
+def test_response_time_is_null_outside_a_request(audit_context):
+    env = audit_context
+    with env["session_factory"]() as db:
+        log_audit_event(
+            db,
+            user=None,
+            action=AuditAction.EXPORT,
+            resource_type=ResourceType.SESSION,
+            resource_id=None,
+            result=AuditResult.SUCCESS,
+        )
+        db.commit()
+    [event] = _events(env)
+    assert event.duration_ms is None
+
+
+def _revoked(env):
+    headers = env["headers"]("employee")
+    env["client"].post("/auth/logout", headers=headers)
+    env["client"].get("/auth/me", headers=headers)
+
+
+def _inactive(env):
+    headers = env["headers"]("employee")
+    with env["session_factory"]() as db:
+        db.get(User, env["ids"]["employee"]).status = UserStatus.INACTIVE
+        db.commit()
+    env["client"].get("/auth/me", headers=headers)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "action", "reason"),
+    [
+        (lambda env: env["client"].get("/audit"), "TOKEN_MISSING", "MISSING_TOKEN"),
+        (
+            lambda env: env["client"].get("/audit", headers={"Authorization": "Bearer bad"}),
+            "AUTHENTICATION_FAILED",
+            "INVALID_TOKEN",
+        ),
+        (
+            lambda env: env["client"].get(
+                "/audit",
+                headers={"Authorization": f"Bearer {_expired_token(env, settings.jwt_secret_key)}"},
+            ),
+            "SESSION_EXPIRED",
+            "EXPIRED_TOKEN",
+        ),
+        (_revoked, "AUTHENTICATION_FAILED", "REVOKED_TOKEN"),
+        (_inactive, "AUTHENTICATION_FAILED", "INACTIVE_OR_UNKNOWN_USER"),
+        (
+            lambda env: env["client"].get("/audit", headers=env["headers"]("employee")),
+            "ACCESS_DENIED",
+            "ROLE_FORBIDDEN",
+        ),
+        (lambda env: _login(env, "admin@example.com", "wrong"), "LOGIN", "INVALID_CREDENTIALS"),
+        (lambda env: _login(env, "nobody@example.com"), "LOGIN", "INVALID_CREDENTIALS"),
+    ],
+)
+def test_each_refusal_records_its_reason(audit_context, scenario, action, reason):
+    env = audit_context
+    scenario(env)
+    refusals = [e for e in _events(env) if e.result == AuditResult.FAILURE.value]
+    assert len(refusals) == 1
+    assert refusals[0].action == action
+    assert refusals[0].details == {"reason": reason}
+
+
+def test_successful_events_carry_no_reason(audit_context):
+    env = audit_context
+    _login(env, "admin@example.com")
+    env["client"].get("/audit/export", headers=env["headers"]("admin"))
+    env["client"].post("/auth/logout", headers=env["headers"]("employee"))
+    events = _events(env)
+    assert {e.action for e in events} == {"LOGIN", "EXPORT", "LOGOUT"}
+    assert all(e.result == "SUCCESS" and e.details is None for e in events)
+
+
+def test_logout_records_the_ip_address(audit_context):
+    env = audit_context
+    env["client"].post("/auth/logout", headers=env["headers"]("employee"))
+    [event] = _events(env, AuditAction.LOGOUT)
+    assert event.ip_address == "testclient"
+    assert event.user_department_id == _department_of(env, "employee")
+
+
+def test_details_only_hold_known_reasons_and_document_ids(audit_context):
+    env = audit_context
+    env["client"].get("/audit")
+    env["client"].get("/audit", headers={"Authorization": "Bearer forged.token.value"})
+    env["client"].get("/audit", headers=env["headers"]("employee"))
+    _login(env, "admin@example.com", "Sup3r-Secret!")
+    reasons = {reason.value for reason in AuditReason}
+    for event in _events(env):
+        assert set(event.details) <= {"reason", "document_ids"}
+        assert event.details["reason"] in reasons
+        assert "Sup3r-Secret!" not in str(event.details)
+        assert "forged.token.value" not in str(event.details)
+
+
+def test_audit_api_exposes_departments_duration_and_details(audit_context):
+    env = audit_context
+    env["client"].get("/audit", headers=env["headers"]("employee"))
+    body = env["client"].get("/audit?action=ACCESS_DENIED", headers=env["headers"]("admin")).json()
+    [item] = body["items"]
+    assert item["user_department_id"] == _department_of(env, "employee")
+    assert item["user_department_name"] == "Front Office"
+    assert item["resource_department_id"] is None
+    assert item["resource_department_name"] is None
+    assert isinstance(item["duration_ms"], int)
+    assert item["details"] == {"reason": "ROLE_FORBIDDEN"}
+
+
+def test_csv_export_includes_new_columns_and_stays_escaped(audit_context):
+    env = audit_context
+    with env["session_factory"]() as db:
+        hostile = Department(name="=HYPERLINK(1)")
+        db.add(hostile)
+        db.flush()
+        db.get(User, env["ids"]["employee"]).department_id = hostile.id
+        db.commit()
+    env["client"].get("/audit", headers=env["headers"]("employee"))
+
+    lines = env["client"].get("/audit/export", headers=env["headers"]("admin")).text.splitlines()
+    assert lines[0] == (
+        "timestamp,user_email,action,resource_type,resource_id,result,ip_address,"
+        "user_department,resource_department,duration_ms,details"
+    )
+    denied = next(line for line in lines if ",ACCESS_DENIED," in line)
+    assert "'=HYPERLINK(1)" in denied
+    assert '"{""reason"":""ROLE_FORBIDDEN""}"' in denied

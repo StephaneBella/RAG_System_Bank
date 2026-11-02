@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import bearer_scheme, get_current_user
 from app.core.security import create_access_token, decode_access_token
 from app.db.session import get_db
-from app.models.audit_log import AuditAction, AuditResult, ResourceType
+from app.models.audit_log import AuditAction, AuditReason, AuditResult, ResourceType
 from app.models.revoked_token import RevokedToken
 from app.models.user import User
 from app.schemas.auth import CurrentUserResponse, LoginRequest, TokenResponse
@@ -37,6 +37,7 @@ def login(
             resource_id=attempted_user.id if attempted_user is not None else None,
             result=AuditResult.FAILURE,
             ip_address=request.client.host if request.client else None,
+            reason=AuditReason.INVALID_CREDENTIALS,
         )
         db.commit()
         raise HTTPException(
@@ -71,6 +72,7 @@ def get_me(
 
 @router.post("/logout")
 def logout(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -93,6 +95,7 @@ def logout(
             resource_type=ResourceType.USER,
             resource_id=current_user.id,
             result=AuditResult.SUCCESS,
+            ip_address=request.client.host if request.client else None,
         )
         db.commit()
 

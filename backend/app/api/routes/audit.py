@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -31,6 +32,10 @@ CSV_COLUMNS = [
     "resource_id",
     "result",
     "ip_address",
+    "user_department",
+    "resource_department",
+    "duration_ms",
+    "details",
 ]
 
 
@@ -121,6 +126,10 @@ def export_audit_logs_csv(
                 _csv_cell(log.resource_id),
                 _csv_cell(log.result),
                 _csv_cell(log.ip_address),
+                _csv_cell(log.user_department_name),
+                _csv_cell(log.resource_department_name),
+                _csv_cell(log.duration_ms),
+                _csv_cell(json.dumps(log.details, separators=(",", ":")) if log.details else None),
             ]
         )
 

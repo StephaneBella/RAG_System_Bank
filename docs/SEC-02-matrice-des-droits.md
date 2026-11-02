@@ -111,9 +111,10 @@ Exécution : `cd backend && uv run pytest`.
 
 - Les refus 401 (`get_current_user`) et 403 (`require_permission`) sont
   journalisés de façon centralisée dans `backend/app/api/dependencies.py`
-  (`TOKEN_MISSING` / `AUTHENTICATION_FAILED` / `SESSION_EXPIRED` / `ACCESS_DENIED`). Le schéma ne stocke ni le motif
-  précis du 401 (absent, invalide, expiré…) ni la route appelée : extension de
-  schéma prévue dans SEC-01.
+  (`TOKEN_MISSING` / `AUTHENTICATION_FAILED` / `SESSION_EXPIRED` / `ACCESS_DENIED`),
+  avec leur motif dans `details.reason` (voir
+  `docs/SEC-01-detection-comportements-suspects.md`, « Format du journal »).
+  La route appelée n'est pas enregistrée.
 - Les appels anonymes répétés sont tous journalisés, sans limitation de débit :
   la détection (`GET /audit/alerts`) les signale mais ne les bloque pas.
 - Les permissions sont déclarées dans plusieurs dictionnaires `ROLE_PERMISSIONS`
