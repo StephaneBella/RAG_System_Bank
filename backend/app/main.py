@@ -4,19 +4,21 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.router import api_router
-from app.core.config import settings
-from app.db.seed import seed_initial_data
+from app.api.rag import init_rag_service, router as rag_router # [RAG] ajout
+from api.router import api_router
+from core.config import settings
+from db.seed import seed_initial_data
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     seed_initial_data()
+    await init_rag_service()
     yield
 
 
 app = FastAPI(
-    title="Bank RAG Document Sprint 1",
+    title="Bank RAG Document Sprint 2",
     lifespan=lifespan,
 )
 
@@ -29,7 +31,7 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
-
+app.include_router(rag_router)
 
 @app.get("/health")
 def health_check():
