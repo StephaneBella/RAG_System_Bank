@@ -170,7 +170,11 @@ def _scoped_documents(db: Session, current_user: User) -> list[StoredDocument]:
         if current_user.department is None:
             return []
         department_token = sanitize_department_token(current_user.department.name)
-        documents = [doc for doc in documents if doc.department_token == department_token]
+        documents = [
+            doc
+            for doc in documents
+            if doc.department_token == department_token
+        ]
     return documents
 
 
