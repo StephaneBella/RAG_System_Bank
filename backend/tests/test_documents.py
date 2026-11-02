@@ -217,6 +217,25 @@ def test_employee_cannot_access_public_document_from_another_department(document
 
 
 @pytest.mark.parametrize("suffix", ["", "/content"])
+def test_document_denial_is_audited_once_without_generic_refusal(document_context, suffix):
+    env = document_context
+    document_id = _document_ids(env)["Confidential Report"]
+    response = env["client"].get(
+        f"/documents/{document_id}{suffix}", headers=env["headers"]("employee_a")
+    )
+    assert response.status_code == 403
+
+    with env["session_factory"]() as db:
+        events = db.scalars(
+            select(AuditLog).where(AuditLog.user_id == env["ids"]["employee_a"])
+        ).all()
+    assert len(events) == 1
+    assert events[0].action == AuditAction.DOCUMENT_VIEW.value
+    assert events[0].result == AuditResult.FAILURE.value
+    assert events[0].resource_id == document_id
+
+
+@pytest.mark.parametrize("suffix", ["", "/content"])
 def test_employee_can_access_own_department_documents(document_context, suffix):
     env = document_context
     document_id = _document_ids(env)["Beta Notes"]

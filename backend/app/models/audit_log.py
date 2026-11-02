@@ -19,6 +19,10 @@ class AuditAction(str, Enum):
     USER_UPDATE = "USER_UPDATE"
     USER_STATUS_UPDATE = "USER_STATUS_UPDATE"
     EXPORT = "EXPORT"
+    AUTHENTICATION_FAILED = "AUTHENTICATION_FAILED"
+    ACCESS_DENIED = "ACCESS_DENIED"
+    SESSION_EXPIRED = "SESSION_EXPIRED"
+    TOKEN_MISSING = "TOKEN_MISSING"
 
 
 # For now we can focus only on login and document access audits
@@ -26,6 +30,8 @@ class ResourceType(str, Enum):
     DOCUMENT = "DOCUMENT"
     USER = "USER"
     SESSION = "SESSION"
+    AUDIT_LOG = "AUDIT_LOG"
+    DEPARTMENT = "DEPARTMENT"
 
 
 class AuditResult(str, Enum):
@@ -65,6 +71,7 @@ class AuditLog(Base):
     timestamp: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
+        index=True,
     )
 
     ip_address: Mapped[str] = mapped_column(

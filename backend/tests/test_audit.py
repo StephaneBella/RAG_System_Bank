@@ -1,17 +1,21 @@
 # Tests du journal d'audit et de la traçabilité
 
+from datetime import UTC, datetime, timedelta
+
+import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.models
+from app.core.config import settings
 from app.core.security import create_access_token, hash_password
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-from app.models.audit_log import ResourceType
+from app.models.audit_log import AuditAction, AuditLog, AuditResult, ResourceType
 from app.models.department import Department
 from app.models.user import User, UserRole, UserStatus
 
@@ -62,7 +66,12 @@ def audit_context():
 
     try:
         with TestClient(app) as client:
-            yield {"client": client, "headers": headers, "ids": ids}
+            yield {
+                "client": client,
+                "headers": headers,
+                "ids": ids,
+                "session_factory": TestingSessionLocal,
+            }
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(bind=engine)
@@ -224,3 +233,207 @@ def test_user_mutations_are_audited(audit_context):
     status = env["client"].get("/audit?action=USER_STATUS_UPDATE", headers=auth).json()
     assert status["total"] == 1
     assert status["items"][0]["result"] == "SUCCESS"
+
+
+REFUSAL_ACTIONS = {
+    AuditAction.AUTHENTICATION_FAILED.value,
+    AuditAction.TOKEN_MISSING.value,
+    AuditAction.SESSION_EXPIRED.value,
+    AuditAction.ACCESS_DENIED.value,
+}
+
+
+def _events(env, action=None):
+    # A fresh session proves the event was committed despite the error response.
+    with env["session_factory"]() as db:
+        query = select(AuditLog)
+        if action is not None:
+            query = query.where(AuditLog.action == action.value)
+        return db.scalars(query.order_by(AuditLog.id)).all()
+
+
+def _assert_single_auth_failure(env, user_id=None, action=AuditAction.AUTHENTICATION_FAILED):
+    events = _events(env)
+    assert len(events) == 1
+    event = events[0]
+    assert event.action == action.value
+    assert event.resource_type == ResourceType.SESSION.value
+    assert event.result == AuditResult.FAILURE.value
+    assert event.user_id == user_id
+    assert event.resource_id is None
+    assert event.ip_address is not None
+
+
+def test_missing_token_is_audited_as_token_missing(audit_context):
+    env = audit_context
+    assert env["client"].get("/audit").status_code == 401
+    _assert_single_auth_failure(env, action=AuditAction.TOKEN_MISSING)
+    assert _events(env, AuditAction.AUTHENTICATION_FAILED) == []
+
+
+def test_non_bearer_scheme_is_audited_as_token_missing(audit_context):
+    env = audit_context
+    response = env["client"].get("/audit", headers={"Authorization": "Basic YWRtaW46c2VjcmV0"})
+    assert response.status_code == 401
+    _assert_single_auth_failure(env, action=AuditAction.TOKEN_MISSING)
+
+
+def test_invalid_token_is_audited(audit_context):
+    env = audit_context
+    response = env["client"].get("/audit", headers={"Authorization": "Bearer not-a-jwt"})
+    assert response.status_code == 401
+    _assert_single_auth_failure(env)
+
+
+def _expired_token(env, secret):
+    return jwt.encode(
+        {
+            "sub": str(env["ids"]["admin"]),
+            "role": "ADMIN",
+            "iat": datetime.now(UTC) - timedelta(hours=2),
+            "exp": datetime.now(UTC) - timedelta(hours=1),
+            "jti": "expired-token-audit",
+        },
+        secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+
+def test_expired_token_is_audited_as_session_expiry_anonymously(audit_context):
+    env = audit_context
+    token = _expired_token(env, settings.jwt_secret_key)
+    response = env["client"].get("/audit", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+    events = _events(env)
+    assert len(events) == 1
+    assert events[0].action == AuditAction.SESSION_EXPIRED.value
+    assert events[0].resource_type == ResourceType.SESSION.value
+    assert events[0].result == AuditResult.FAILURE.value
+    assert events[0].user_id is None
+    assert _events(env, AuditAction.AUTHENTICATION_FAILED) == []
+
+
+def test_expired_token_with_invalid_signature_is_an_authentication_failure(audit_context):
+    env = audit_context
+    token = _expired_token(env, "attacker-secret-not-the-real-one-0123456789")
+    response = env["client"].get("/audit", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+    _assert_single_auth_failure(env, user_id=None)
+    assert _events(env, AuditAction.SESSION_EXPIRED) == []
+
+
+def test_revoked_token_is_audited_with_user(audit_context):
+    env = audit_context
+    employee = env["headers"]("employee")
+    assert env["client"].post("/auth/logout", headers=employee).status_code == 200
+
+    assert env["client"].get("/auth/me", headers=employee).status_code == 401
+
+    failures = _events(env, AuditAction.AUTHENTICATION_FAILED)
+    assert len(failures) == 1
+    assert failures[0].user_id == env["ids"]["employee"]
+    assert failures[0].resource_type == ResourceType.SESSION.value
+    assert failures[0].result == AuditResult.FAILURE.value
+
+
+def test_inactive_user_is_audited_with_user(audit_context):
+    env = audit_context
+    employee = env["headers"]("employee")
+    with env["session_factory"]() as db:
+        db.get(User, env["ids"]["employee"]).status = UserStatus.INACTIVE
+        db.commit()
+
+    assert env["client"].get("/auth/me", headers=employee).status_code == 401
+    _assert_single_auth_failure(env, user_id=env["ids"]["employee"])
+
+
+def test_employee_denied_audit_log_is_audited_once(audit_context):
+    env = audit_context
+    response = env["client"].get("/audit", headers=env["headers"]("employee"))
+    assert response.status_code == 403
+
+    events = _events(env)
+    assert len(events) == 1
+    event = events[0]
+    assert event.action == AuditAction.ACCESS_DENIED.value
+    assert event.resource_type == ResourceType.AUDIT_LOG.value
+    assert event.result == AuditResult.FAILURE.value
+    assert event.user_id == env["ids"]["employee"]
+
+
+def test_employee_denied_user_update_is_audited_once(audit_context):
+    env = audit_context
+    admin_id = env["ids"]["admin"]
+    response = env["client"].patch(
+        f"/users/{admin_id}",
+        headers=env["headers"]("employee"),
+        json={"email": "hijack@example.com"},
+    )
+    assert response.status_code == 403
+
+    events = _events(env)
+    assert len(events) == 1
+    assert events[0].action == AuditAction.ACCESS_DENIED.value
+    assert events[0].resource_type == ResourceType.USER.value
+    assert events[0].user_id == env["ids"]["employee"]
+    assert _events(env, AuditAction.USER_UPDATE) == []
+
+
+def test_refusal_events_never_store_token_or_secret(audit_context):
+    env = audit_context
+    employee = env["headers"]("employee")
+    employee_token = employee["Authorization"].split(" ", 1)[1]
+    forged_token = "forged.token.value"
+
+    env["client"].get("/audit", headers=employee)
+    env["client"].get("/audit", headers={"Authorization": f"Bearer {forged_token}"})
+    env["client"].post("/auth/login", json={"email": "admin@example.com", "password": "wrong"})
+    env["client"].get("/audit", headers={"Authorization": "Basic YWRtaW46c2VjcmV0"})
+    assert _events(env, AuditAction.TOKEN_MISSING)
+
+    stored = " ".join(
+        str(getattr(event, column.name))
+        for event in _events(env)
+        for column in AuditLog.__table__.columns
+    )
+    export = env["client"].get("/audit/export", headers=env["headers"]("admin")).text
+    for secret in (
+        employee_token,
+        forged_token,
+        "Bearer",
+        "Basic",
+        "YWRtaW46c2VjcmV0",
+        "wrong",
+        settings.jwt_secret_key,
+    ):
+        assert secret not in stored
+        assert secret not in export
+
+
+def test_authorized_requests_create_no_refusal_event(audit_context):
+    env = audit_context
+    admin = env["headers"]("admin")
+    assert env["client"].get("/audit", headers=admin).status_code == 200
+    assert env["client"].get("/users", headers=admin).status_code == 200
+    assert env["client"].get("/departments", headers=env["headers"]("employee")).status_code == 200
+    assert env["client"].get("/auth/me", headers=env["headers"]("employee")).status_code == 200
+
+    assert not [event for event in _events(env) if event.action in REFUSAL_ACTIONS]
+
+
+def test_audit_filters_on_refusal_actions(audit_context):
+    env = audit_context
+    env["client"].get("/audit", headers=env["headers"]("employee"))
+    env["client"].get("/audit")
+    env["client"].get("/audit", headers={"Authorization": "Bearer forged.token.value"})
+    admin = env["headers"]("admin")
+
+    denied = env["client"].get("/audit?action=ACCESS_DENIED", headers=admin)
+    assert denied.status_code == 200
+    assert denied.json()["total"] == 1
+
+    for action in ("AUTHENTICATION_FAILED", "TOKEN_MISSING"):
+        response = env["client"].get(f"/audit?action={action}", headers=admin)
+        assert response.status_code == 200
+        assert response.json()["total"] == 1

@@ -60,6 +60,7 @@ Les consultations et recherches réussies sont journalisées (`SUCCESS`).
 | Lister les départements | `GET /departments` | ❌ 401 | ✅ | ✅ |
 | Consulter le journal d'audit | `GET /audit` | ❌ 401 | ❌ 403 | ✅ |
 | Exporter le journal d'audit | `GET /audit/export` | ❌ 401 | ❌ 403 | ✅ (export journalisé) |
+| Consulter les alertes de sécurité | `GET /audit/alerts` | ❌ 401 | 🔒 403 | ✅ |
 
 ### 2.3 Authentification et session
 
@@ -68,7 +69,9 @@ Les consultations et recherches réussies sont journalisées (`SUCCESS`).
 | Connexion valide | ✅ jeton JWT, journalisé `SUCCESS` |
 | Mauvais mot de passe / email inconnu | ❌ 401, journalisé `FAILURE` |
 | Compte inactif | ❌ 401 |
-| Jeton absent, invalide ou expiré | ❌ 401 |
+| Jeton absent (pas d'en-tête, ou schéma autre que Bearer) | ❌ 401, journalisé `TOKEN_MISSING` (anonyme, valeur d'en-tête jamais stockée) |
+| Jeton présent mais rejeté (invalide, signature falsifiée, claims manquants) | ❌ 401, journalisé `AUTHENTICATION_FAILED` (anonyme) |
+| Jeton authentique mais expiré | ❌ 401, journalisé `SESSION_EXPIRED` (anonyme) |
 | Jeton révoqué (après déconnexion) | ❌ 401 |
 | Déconnexion | ✅ révocation du jeton, journalisée `SUCCESS` |
 
@@ -92,13 +95,27 @@ Exécution : `cd backend && uv run pytest`.
 | Départements lisibles par tout utilisateur authentifié | `tests/test_users.py::test_department_list_requires_authentication`, `::test_employee_can_list_departments` |
 | Invitations réservées à ADMIN | `tests/test_invitations.py::test_invitation_requires_admin`, `::test_employee_cannot_create_invitation` |
 | Journal d'audit réservé à ADMIN | `tests/test_audit.py::test_audit_requires_admin`, `::test_audit_export_requires_admin` |
+| Alertes de sécurité réservées à ADMIN | `tests/test_suspicious_activity.py::test_alerts_require_admin` |
+| Jeton expiré journalisé `SESSION_EXPIRED`, jamais `AUTHENTICATION_FAILED` | `tests/test_audit.py::test_expired_token_is_audited_as_session_expiry_anonymously` |
+| Règles de détection R1a à R5 | `tests/test_suspicious_activity.py` (voir `docs/SEC-01-detection-comportements-suspects.md`) |
 | Authentification et session | `tests/test_auth.py` (connexion, échec, compte inactif, jeton invalide / expiré / révoqué, déconnexion) |
+| Jeton absent : un seul événement `TOKEN_MISSING`, jamais `AUTHENTICATION_FAILED` | `tests/test_audit.py::test_missing_token_is_audited_as_token_missing`, `::test_non_bearer_scheme_is_audited_as_token_missing` |
+| Jeton présent mais rejeté : un seul événement `AUTHENTICATION_FAILED` persisté (anonyme si le jeton n'est pas vérifié) | `tests/test_audit.py::test_invalid_token_is_audited`, `::test_expired_token_with_invalid_signature_is_an_authentication_failure`, `::test_revoked_token_is_audited_with_user`, `::test_inactive_user_is_audited_with_user` |
+| Chaque 403 de `require_permission` produit un seul événement `ACCESS_DENIED` persisté | `tests/test_audit.py::test_employee_denied_audit_log_is_audited_once`, `::test_employee_denied_user_update_is_audited_once` |
+| Refus documents : un seul `DOCUMENT_VIEW FAILURE`, sans `ACCESS_DENIED` en doublon | `tests/test_documents.py::test_document_denial_is_audited_once_without_generic_refusal[]`, `[/content]` |
+| Aucun jeton, mot de passe ni secret dans le journal ou l'export | `tests/test_audit.py::test_refusal_events_never_store_token_or_secret` |
+| Requêtes autorisées : aucun événement de refus | `tests/test_audit.py::test_authorized_requests_create_no_refusal_event` |
+| Filtrage du journal sur les actions de refus | `tests/test_audit.py::test_audit_filters_on_refusal_actions` |
 
 ## 4. Limites connues
 
-- Les refus 403 émis par `require_permission` (routes `/users`, `/audit`,
-  `/departments`) et les 401 de `get_current_user` ne sont **pas journalisés**
-  (à traiter dans SEC-01).
+- Les refus 401 (`get_current_user`) et 403 (`require_permission`) sont
+  journalisés de façon centralisée dans `backend/app/api/dependencies.py`
+  (`TOKEN_MISSING` / `AUTHENTICATION_FAILED` / `SESSION_EXPIRED` / `ACCESS_DENIED`). Le schéma ne stocke ni le motif
+  précis du 401 (absent, invalide, expiré…) ni la route appelée : extension de
+  schéma prévue dans SEC-01.
+- Les appels anonymes répétés sont tous journalisés, sans limitation de débit :
+  la détection (`GET /audit/alerts`) les signale mais ne les bloque pas.
 - Les permissions sont déclarées dans plusieurs dictionnaires `ROLE_PERMISSIONS`
   répartis par route ; il n'existe pas encore de source unique.
 - Le chat RAG n'existe pas encore : les tests de non-divulgation et de
