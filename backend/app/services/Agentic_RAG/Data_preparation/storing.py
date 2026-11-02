@@ -21,7 +21,9 @@ def get_qdrant_client() -> QdrantClient:
     return QdrantClient(url=url, api_key=api_key)
 
 
-def ensure_collection(client: QdrantClient, vector_size: int, collection: str = COLLECTION_NAME) -> None:
+def ensure_collection(
+    client: QdrantClient, vector_size: int, collection: str = COLLECTION_NAME
+) -> None:
     """Crée la collection si besoin, puis garantit les index de payload.
     Les index sur doc_type / business_layer servent au filtrage RBAC coté Qdrant.
     """
@@ -38,16 +40,15 @@ def ensure_collection(client: QdrantClient, vector_size: int, collection: str = 
         ("business_layer", PayloadSchemaType.KEYWORD),
         ("page", PayloadSchemaType.INTEGER),
     ]:
-        client.create_payload_index(collection, field, schema) #idempotent
-    
+        client.create_payload_index(collection, field, schema)  # idempotent
 
 
 def store_nodes(
-        nodes: list[TextNode],
-        vectors: list[list[float]],
-        client: QdrantClient | None = None,
-        collection: str = COLLECTION_NAME,
-        batch_size: int = 64,
+    nodes: list[TextNode],
+    vectors: list[list[float]],
+    client: QdrantClient | None = None,
+    collection: str = COLLECTION_NAME,
+    batch_size: int = 64,
 ) -> int:
     """Upsert par lots. Retourne le nombre de points écrits."""
     if len(nodes) != len(vectors):
@@ -63,7 +64,6 @@ def store_nodes(
             id=n.node_id,
             vector=v,
             payload={"text": n.get_content(metadata_mode=MetadataMode.NONE), **n.metadata},
-            
         )
         for n, v in zip(nodes, vectors)
     ]
