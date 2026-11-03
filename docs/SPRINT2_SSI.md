@@ -17,7 +17,8 @@ Ce document contient les tâches de conception du sprint : matrice des droits, s
 - Routes documents : liste, ajout, modification, suppression, recherche.
 - Tests : `test_auth.py`, `test_documents.py`.
 - Contrôle de permission par rôle : `require_permission` (pour `/audit` et `/users`) et `_require_permission` (pour `/documents`).
-- `documents.py` journalise (résultat `FAILURE`) les refus de rôle et les refus d'accès à un document privé d'un autre département. La liste semble filtrée par département (à confirmer pour la recherche). Le code laisse un document `public` visible aux autres départements.
+- `documents.py` journalise (résultat `FAILURE`) les refus de rôle et les refus d'accès à un document privé d'un autre département. 
+- **Écart constaté sur `main`** : `GET /documents/{id}` autorise un document `public` d'un autre département, mais la liste et la recherche (`_scoped_documents`) ne retournent que les documents du département de l'employé. Deux tests existants le détectent : `test_employee_sees_public_and_own_department_private_documents` et `test_search_respects_visibility_and_department_scope_and_is_audited`. Ce n'est pas une fuite (le défaut est trop restrictif), mais le comportement contredit les tests du groupe. Correction proposée : inclure `doc.visibility == "public"` dans le filtre.
 - `GET /audit` : filtres action, résultat, période, email, dates, et pagination bornée.
 - Détection d'activité suspecte (règles R1 à R4, `GET /audit/alerts`) et tests associés : ajoutés sur cette branche.
 - Routes backend confirmées : `/audit` (dont `/audit/export`), `/users` (liste, création par invitation, modification, changement de statut), `/departments`, `/documents/{id}/content`.
@@ -38,7 +39,7 @@ Rôles : `ADMIN`, `EMPLOYEE`. Couches métier (README) : Front Office, Credit & 
 |---|---|---|---|---|
 | Se connecter, accepter une invitation | Autorisé | Autorisé | Autorisé | Autorisé |
 | Se déconnecter, consulter son profil | 401 | Autorisé | Autorisé | Autorisé |
-| Lister, rechercher, consulter un document | 401 | Autorisé | Documents publics : autorisé. Documents privés : refus + journalisation | Autorisé (périmètre à confirmer) |
+| Lister, rechercher, consulter un document | 401 | Autorisé | Documents publics : autorisé par identifiant (liste et recherche : voir écart en section 0). Documents privés : refus + journalisation | Autorisé (périmètre à confirmer) |
 | Créer, modifier, supprimer un document | 401 | 403 | 403 | Autorisé |
 | Inviter, modifier, désactiver un utilisateur | 401 | 403 | 403 | Autorisé |
 | Consulter ou exporter les journaux d'audit | 401 | 403 | 403 | Autorisé |
@@ -195,6 +196,9 @@ Un refus est enregistré avec `result = FAILURE` et `details.reason` (par exempl
 
 ## 9. Limites connues
 
+- L'intégration continue est rouge sur `main` avant ce sprint (exécutions #53 et #54). Cause probable : le formatage de `documents.py` (`ruff format` le modifie) ; à confirmer dans le journal de l'exécution.
+- Le secret JWT d'exemple fait 31 octets et déclenche `InsecureKeyLengthWarning` : l'application démarre sans exiger une longueur minimale (la validation a été retirée, voir le README).
+- Les refus d'authentification (jeton absent, invalide, révoqué) et les refus 403 de `/audit` et `/users` ne sont pas journalisés.
 - La pseudonymisation par expressions régulières et reconnaissance d'entités ne détecte pas tout. Le filtrage par couche en amont reste la défense principale.
 - L'injection de prompt ne peut pas être exclue à 100 % ; elle est réduite par le filtrage amont et le contrôle du prompt envoyé.
 - Un journal modifiable par un compte de base privilégié n'est pas inviolable ; l'ajout seul est appliqué par l'application, pas par la base.
