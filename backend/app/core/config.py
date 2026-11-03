@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     alert_spike_window_minutes: PositiveInt = 10
     alert_spike_baseline_days: PositiveInt = 7
     alert_spike_min_active_windows: PositiveInt = 6
+    alert_document_enumeration_threshold: PositiveInt = 4
+    alert_document_enumeration_window_minutes: PositiveInt = 30
+    alert_search_burst_threshold: PositiveInt = 30
+    alert_search_burst_window_minutes: PositiveInt = 1
 
     model_config = SettingsConfigDict(
         env_file=".env",

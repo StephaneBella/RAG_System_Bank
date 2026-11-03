@@ -40,7 +40,7 @@ class AuditResult(str, Enum):
 
 
 class AuditReason(str, Enum):
-    """Closed list of refusal reasons: details never hold free text."""
+    """Closed list of refusal and failure reasons: details never hold free text."""
 
     MISSING_TOKEN = "MISSING_TOKEN"
     INVALID_TOKEN = "INVALID_TOKEN"
@@ -50,6 +50,8 @@ class AuditReason(str, Enum):
     ROLE_FORBIDDEN = "ROLE_FORBIDDEN"
     DEPARTMENT_FORBIDDEN = "DEPARTMENT_FORBIDDEN"
     INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
+    DOCUMENT_NOT_FOUND = "DOCUMENT_NOT_FOUND"
+    FILE_NOT_FOUND = "FILE_NOT_FOUND"
 
 
 class AuditLog(Base):

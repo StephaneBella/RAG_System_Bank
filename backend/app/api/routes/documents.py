@@ -235,7 +235,15 @@ def _get_accessible_document(
     index = sync_index_with_folder()
     entry = find_by_id(index, document_id)
     if entry is None:
-        _audit(db, user, AuditAction.DOCUMENT_VIEW, AuditResult.FAILURE, request, document_id)
+        _audit(
+            db,
+            user,
+            AuditAction.DOCUMENT_VIEW,
+            AuditResult.FAILURE,
+            request,
+            document_id,
+            reason=AuditReason.DOCUMENT_NOT_FOUND,
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -330,6 +338,7 @@ def get_document_content(
             request,
             document_id,
             resource_department_id=resource_department_id,
+            reason=AuditReason.FILE_NOT_FOUND,
         )
         db.commit()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")

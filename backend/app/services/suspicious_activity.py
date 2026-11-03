@@ -14,10 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
-from app.models.audit_log import AuditAction, AuditLog, AuditResult
+from app.models.audit_log import AuditAction, AuditLog, AuditReason, AuditResult
 from app.models.department import Department
 from app.models.user import User, UserRole
 from app.schemas.security_alert import AlertRule, AlertSeverity, SecurityAlert
+from app.services import document_service
 from app.services.document_service import (
     find_by_id,
     load_index,
@@ -310,6 +311,100 @@ def _cross_department(
     return alerts
 
 
+def _index_for_inference() -> dict | None:
+    """Current index, only when it can prove that a document id does not exist.
+
+    load_index() returns an empty index both for a missing and for an unreadable file, so
+    the index file must exist and list at least one document. Read-only.
+    """
+    if not (document_service.DOCUMENTS_DIR / document_service.INDEX_NAME).is_file():
+        return None
+    index = load_index()
+    if not _is_usable_index(index) or not index["documents"]:
+        return None
+    return index
+
+
+def _nonexistent_document_attempts(
+    events: list[AuditLog], users: dict[int, User]
+) -> tuple[list[AuditLog], set[int]]:
+    """Employee DOCUMENT_VIEW failures on document ids that do not exist.
+
+    Events carrying a reason are trusted: only DOCUMENT_NOT_FOUND counts, never
+    DEPARTMENT_FORBIDDEN or FILE_NOT_FOUND. Older events without reason count only when
+    the current index proves the id is absent; an id still in the index (e.g. a document
+    whose file is missing) never counts, and without a usable index they are ignored.
+    Returns the attempts and the ids of the events that were inferred.
+    """
+    attempts: list[AuditLog] = []
+    inferred: set[int] = set()
+    index: dict | None = None
+    index_loaded = False
+    for event in events:
+        user = users.get(event.user_id)
+        if (
+            event.action != AuditAction.DOCUMENT_VIEW.value
+            or event.result != AuditResult.FAILURE.value
+            or event.resource_id is None
+            or user is None
+            or user.role != UserRole.EMPLOYEE
+        ):
+            continue
+        reason = (event.details or {}).get("reason")
+        if reason is not None:
+            if reason == AuditReason.DOCUMENT_NOT_FOUND.value:
+                attempts.append(event)
+            continue
+        if not index_loaded:
+            index = _index_for_inference()
+            index_loaded = True
+        if index is not None and find_by_id(index, event.resource_id) is None:
+            attempts.append(event)
+            inferred.add(event.id)
+    return attempts, inferred
+
+
+def _document_enumeration(events: list[AuditLog], users: dict[int, User]) -> list[SecurityAlert]:
+    """Distinct non-existent document ids requested by one employee (id guessing)."""
+    threshold = settings.alert_document_enumeration_threshold
+    window = settings.alert_document_enumeration_window_minutes
+    attempts, inferred = _nonexistent_document_attempts(events, users)
+    alerts = []
+    for user_id, user_events in _group(attempts, lambda e: e.user_id).items():
+        peak = find_peak(user_events, timedelta(minutes=window), key=lambda e: e.resource_id)
+        if peak.count < threshold:
+            continue
+        alerts.append(
+            _alert(
+                AlertRule.DOCUMENT_ENUMERATION,
+                peak,
+                threshold,
+                window,
+                users=users,
+                user_id=user_id,
+                details={
+                    "document_ids": sorted({e.resource_id for e in peak.events}),
+                    "inferred_document_ids": sorted(
+                        {e.resource_id for e in peak.events if e.id in inferred}
+                    ),
+                },
+            )
+        )
+    return alerts
+
+
+def _search_burst(events: list[AuditLog], users: dict[int, User]) -> list[SecurityAlert]:
+    """Many searches by one user in a short sliding window."""
+    searches = [e for e in events if e.action == AuditAction.DOCUMENT_SEARCH.value]
+    return _threshold_alerts(
+        AlertRule.SEARCH_BURST,
+        _group(searches, lambda e: e.user_id),
+        settings.alert_search_burst_threshold,
+        settings.alert_search_burst_window_minutes,
+        users,
+    )
+
+
 def _activity_spike(
     db: Session,
     events: list[AuditLog],
@@ -415,6 +510,8 @@ def detect_alerts(
             users,
         ),
         *_activity_spike(db, events, users, lookback_start),
+        *_document_enumeration(events, users),
+        *_search_burst(events, users),
     ]
     alerts.sort(key=lambda alert: alert.last_seen, reverse=True)
     alerts.sort(key=lambda alert: SEVERITY_ORDER[alert.severity])

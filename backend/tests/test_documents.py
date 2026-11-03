@@ -599,7 +599,7 @@ def test_missing_document_has_no_resource_department(document_context):
     event = _audit_event(env, AuditAction.DOCUMENT_VIEW, resource_id=9999)
     assert event.result == AuditResult.FAILURE.value
     assert event.resource_department_id is None
-    assert event.details is None
+    assert event.details == {"reason": "DOCUMENT_NOT_FOUND"}
 
 
 def test_create_update_delete_record_the_document_department(document_context):
@@ -665,3 +665,18 @@ def test_search_text_is_never_stored(document_context):
     assert event.details == {"document_ids": []}
     stored = " ".join(str(getattr(event, column.name)) for column in AuditLog.__table__.columns)
     assert query not in stored
+
+
+# --- SEC-01 T5: not-found reasons --------------------------------------------------------
+
+
+@pytest.mark.parametrize("suffix", ["", "/content"])
+def test_unknown_document_id_records_document_not_found(document_context, suffix):
+    env = document_context
+    response = env["client"].get(f"/documents/9999{suffix}", headers=env["headers"]("employee_a"))
+    assert response.status_code == 404
+    [event] = _events_for(env, "employee_a")
+    assert event.action == AuditAction.DOCUMENT_VIEW.value
+    assert event.result == AuditResult.FAILURE.value
+    assert event.resource_id == 9999
+    assert event.details == {"reason": "DOCUMENT_NOT_FOUND"}

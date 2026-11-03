@@ -97,7 +97,7 @@ Exécution : `cd backend && uv run pytest`.
 | Journal d'audit réservé à ADMIN | `tests/test_audit.py::test_audit_requires_admin`, `::test_audit_export_requires_admin` |
 | Alertes de sécurité réservées à ADMIN | `tests/test_suspicious_activity.py::test_alerts_require_admin` |
 | Jeton expiré journalisé `SESSION_EXPIRED`, jamais `AUTHENTICATION_FAILED` | `tests/test_audit.py::test_expired_token_is_audited_as_session_expiry_anonymously` |
-| Règles de détection R1a à R5 | `tests/test_suspicious_activity.py` (voir `docs/SEC-01-detection-comportements-suspects.md`) |
+| Règles de détection R1a à R5, `DOCUMENT_ENUMERATION` et `SEARCH_BURST` | `tests/test_suspicious_activity.py` (voir `docs/SEC-01-detection-comportements-suspects.md`) |
 | Authentification et session | `tests/test_auth.py` (connexion, échec, compte inactif, jeton invalide / expiré / révoqué, déconnexion) |
 | Jeton absent : un seul événement `TOKEN_MISSING`, jamais `AUTHENTICATION_FAILED` | `tests/test_audit.py::test_missing_token_is_audited_as_token_missing`, `::test_non_bearer_scheme_is_audited_as_token_missing` |
 | Jeton présent mais rejeté : un seul événement `AUTHENTICATION_FAILED` persisté (anonyme si le jeton n'est pas vérifié) | `tests/test_audit.py::test_invalid_token_is_audited`, `::test_expired_token_with_invalid_signature_is_an_authentication_failure`, `::test_revoked_token_is_audited_with_user`, `::test_inactive_user_is_audited_with_user` |

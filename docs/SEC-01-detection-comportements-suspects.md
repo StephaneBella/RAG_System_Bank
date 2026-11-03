@@ -41,6 +41,8 @@ Sévérité : `HIGH` si pic ≥ 2 × seuil, sinon `MEDIUM`.
 | **R3 `CROSS_DEPARTMENT_PROBING`** | `DOCUMENT_VIEW` + `FAILURE` d'un EMPLOYEE, document résolu dans un autre département existant | `user_id` | 3 documents **distincts** en 30 min ; HIGH si ≥ 2 départements étrangers |
 | **R4 `ADMIN_FEATURE_PROBING`** | `ACCESS_DENIED` ; `DOCUMENT_CREATE/UPDATE/DELETE` + `FAILURE` d'un EMPLOYEE | `user_id` | 3 en 60 min |
 | **R5 `ACTIVITY_SPIKE`** | Tous les événements de l'utilisateur | `user_id` | voir formule |
+| **`DOCUMENT_ENUMERATION`** | `DOCUMENT_VIEW` + `FAILURE` d'un EMPLOYEE sur un document **inexistant** (voir garde-fous) | `user_id` | 4 identifiants **distincts** en 30 min (`ALERT_DOCUMENT_ENUMERATION_*`) |
+| **`SEARCH_BURST`** | `DOCUMENT_SEARCH` | `user_id` | 30 en 1 min (`ALERT_SEARCH_BURST_*`) |
 
 ### Garde-fous contre les faux positifs
 
@@ -70,6 +72,24 @@ Sévérité : `HIGH` si pic ≥ 2 × seuil, sinon `MEDIUM`.
   de ces routes) ; pour un ADMIN ce sont des erreurs fonctionnelles (404, 409,
   400). `USER_*` et `EXPORT` en échec sont exclus.
 - **Admins** : exclus de R3 et des échecs documentaires de R4 / R2.
+- **`DOCUMENT_ENUMERATION`** : un événement est une tentative sur un document
+  inexistant uniquement si :
+  - il porte le motif `DOCUMENT_NOT_FOUND` (identifiant absent de l'index au
+    moment de la requête). Les motifs `DEPARTMENT_FORBIDDEN`, `FILE_NOT_FOUND`
+    et `ROLE_FORBIDDEN` ne comptent jamais ;
+  - **ou**, pour un événement antérieur aux motifs (sans `reason`), son
+    identifiant est absent de l'index **actuel**, lu par `load_index()` en
+    lecture seule. Un identifiant encore présent dans l'index ne compte jamais
+    (refus ancien, fichier manquant…). Si l'index ne permet pas de le prouver
+    (fichier absent, illisible, structure inattendue ou index vide), l'événement
+    est **ignoré** : l'ambiguïté est irréductible.
+
+  Les admins sont exclus. L'alerte liste `document_ids` et, parmi eux,
+  `inferred_document_ids` (identifiants déduits d'événements anciens). Le même
+  identifiant demandé plusieurs fois ne compte qu'une fois.
+- **`SEARCH_BURST`** : fenêtre glissante d'une minute ; des recherches réparties
+  sur plusieurs minutes ne déclenchent rien. Ne concerne que les rafales courtes,
+  le volume global restant couvert par R5.
 
 ## R5 — formule de référence
 
@@ -115,7 +135,7 @@ inchangées). Champs ajoutés à `audit_logs`, exposés par `GET /audit` et l'ex
 (succès, refus `DEPARTMENT_FORBIDDEN`, fichier absent) et pour les `DOCUMENT_CREATE`,
 `DOCUMENT_UPDATE` (département après modification) et `DOCUMENT_DELETE` réussis.
 
-Motifs de refus (`AuditReason`, liste fermée) :
+Motifs de refus et d'échec (`AuditReason`, liste fermée) :
 
 | Motif | Événement |
 |---|---|
@@ -127,6 +147,8 @@ Motifs de refus (`AuditReason`, liste fermée) :
 | `ROLE_FORBIDDEN` | `ACCESS_DENIED`, `DOCUMENT_CREATE/UPDATE/DELETE` refusés au rôle |
 | `DEPARTMENT_FORBIDDEN` | `DOCUMENT_VIEW` d'un document d'un autre département |
 | `INVALID_CREDENTIALS` | `LOGIN` en échec (email inconnu, mauvais mot de passe ou compte inactif, non distingués) |
+| `DOCUMENT_NOT_FOUND` | `DOCUMENT_VIEW` en échec : identifiant absent de l'index (404) |
+| `FILE_NOT_FOUND` | `DOCUMENT_VIEW` en échec : document existant dont le fichier est absent (404). **Non atteignable actuellement**, voir Limites. |
 
 Les couches de l'ingestion RAG (`business_layer`) ne sont **pas** reliées aux
 départements : leurs identifiants diffèrent (`credit_risques` / `Credit & Risques`,
@@ -153,3 +175,17 @@ départements : leurs identifiants diffèrent (`credit_risques` / `Credit & Risq
   R1b peut produire deux alertes pour une même IP (jetons rejetés, jetons absents).
 - Un changement de `JWT_SECRET_KEY` invalide tous les jetons en cours et peut
   provoquer des alertes R1b massives.
+- **`DOCUMENT_ENUMERATION`, risque résiduel sur les événements anciens** : la
+  déduction se fonde sur l'index **actuel**. Un document supprimé **après**
+  l'événement (refus ancien sans motif, ou fichier manquant à l'époque) n'est
+  plus dans l'index et peut être compté à tort comme inexistant. Les nouveaux
+  événements, qui portent un motif, ne sont pas concernés.
+- **Défaut connu, non corrigé (tâche distincte)** : si le fichier d'un document
+  **existant** a disparu du disque, `GET /documents/{id}` et
+  `GET /documents/{id}/content` renvoient **500** et **n'écrivent aucun
+  événement d'audit**. `_parsed_document` (`backend/app/api/routes/documents.py`)
+  appelle `document_file_times`, dont le `stat()` lève `FileNotFoundError` avant
+  la branche « fichier absent ». Le motif `FILE_NOT_FOUND` est branché sur cette
+  branche mais **ne peut donc pas être enregistré** dans ce scénario tant que le
+  défaut n'est pas traité. Ce cas n'affecte pas `DOCUMENT_ENUMERATION`, qui ne
+  compte jamais `FILE_NOT_FOUND`.

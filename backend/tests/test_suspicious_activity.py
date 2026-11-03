@@ -106,6 +106,7 @@ def ctx(tmp_path, monkeypatch):
         resource_type=ResourceType.SESSION,
         resource_id=None,
         ip=IP,
+        details=None,
     ):
         with TestingSessionLocal() as db:
             for i in range(count):
@@ -118,6 +119,7 @@ def ctx(tmp_path, monkeypatch):
                         result=result.value,
                         timestamp=start + i * step,
                         ip_address=ip,
+                        details=details,
                     )
                 )
             db.commit()
@@ -478,8 +480,9 @@ def test_r2_counts_resolved_cross_department_denials(ctx):
 
 
 def _spike(env, count, user="employee"):
+    # Document views, not searches: a dense run of searches is also a SEARCH_BURST.
     env["add"](
-        AuditAction.DOCUMENT_SEARCH,
+        AuditAction.DOCUMENT_VIEW,
         count,
         user=user,
         start=NOW - timedelta(minutes=9),
@@ -532,7 +535,7 @@ def test_r5_busy_user_baseline_raises_threshold(ctx):
     assert _rules(alerts) == [AlertRule.ACTIVITY_SPIKE]
     assert alerts[0].threshold == 100
     assert alerts[0].details == {
-        "actions": ["DOCUMENT_SEARCH"],
+        "actions": ["DOCUMENT_VIEW"],
         "baseline": "ok",
         "baseline_mean": 20.0,
         "active_windows": 6,
@@ -567,7 +570,7 @@ def test_r5_too_few_active_windows_is_insufficient(ctx):
     _spike(ctx, 60)
     alerts = ctx["detect"]()
     assert alerts[0].details == {
-        "actions": ["DOCUMENT_SEARCH"],
+        "actions": ["DOCUMENT_VIEW"],
         "baseline": "insufficient",
         "active_windows": 5,
     }
@@ -661,6 +664,278 @@ def test_alerts_never_expose_tokens_or_passwords(ctx):
         settings.jwt_secret_key,
     ):
         assert secret not in body
+
+
+# --- DOCUMENT_ENUMERATION (SEC-01 T5) -----------------------------------------------
+
+MISSING_IDS = [100, 101, 102, 103]  # absent from the fixture index (ids 1..8)
+
+
+def _view_attempts(env, document_ids, *, reason=None, user="employee", step_seconds=30):
+    for offset, document_id in enumerate(document_ids):
+        env["add"](
+            AuditAction.DOCUMENT_VIEW,
+            user=user,
+            start=NOW - timedelta(minutes=20) + timedelta(seconds=step_seconds * offset),
+            resource_type=ResourceType.DOCUMENT,
+            resource_id=document_id,
+            details={"reason": reason} if reason else None,
+        )
+
+
+def _enumeration_alerts(env):
+    return [a for a in env["detect"]() if a.rule == AlertRule.DOCUMENT_ENUMERATION]
+
+
+def test_enumeration_from_explicit_not_found_reasons(ctx):
+    _view_attempts(ctx, MISSING_IDS, reason="DOCUMENT_NOT_FOUND")
+    alerts = ctx["detect"]()
+    assert _rules(alerts) == [AlertRule.DOCUMENT_ENUMERATION]
+    [alert] = alerts
+    assert alert.user_id == ctx["ids"]["employee"]
+    assert alert.event_count == 4
+    assert alert.threshold == 4
+    assert alert.window_minutes == 30
+    assert alert.severity == AlertSeverity.MEDIUM
+    assert alert.details["document_ids"] == MISSING_IDS
+    assert alert.details["inferred_document_ids"] == []
+
+
+def test_enumeration_below_threshold(ctx):
+    _view_attempts(ctx, MISSING_IDS[:3], reason="DOCUMENT_NOT_FOUND")
+    assert ctx["detect"]() == []
+
+
+def test_enumeration_counts_distinct_ids_only(ctx):
+    _view_attempts(ctx, [100] * 8, reason="DOCUMENT_NOT_FOUND")
+    assert ctx["detect"]() == []
+
+
+def test_enumeration_uses_a_sliding_30_minute_window(ctx):
+    # 4 distinct ids, 11 minutes apart: never 4 inside the same 30-minute window.
+    _view_attempts(ctx, MISSING_IDS, reason="DOCUMENT_NOT_FOUND", step_seconds=660)
+    assert _enumeration_alerts(ctx) == []
+
+
+@pytest.mark.parametrize("reason", ["DEPARTMENT_FORBIDDEN", "FILE_NOT_FOUND", "ROLE_FORBIDDEN"])
+def test_enumeration_ignores_other_reasons(ctx, reason):
+    _view_attempts(ctx, MISSING_IDS, reason=reason)
+    assert _enumeration_alerts(ctx) == []
+
+
+def test_enumeration_infers_older_events_absent_from_the_index(ctx):
+    _view_attempts(ctx, MISSING_IDS)  # no reason: written before the reasons existed
+    [alert] = _enumeration_alerts(ctx)
+    assert alert.details["document_ids"] == MISSING_IDS
+    assert alert.details["inferred_document_ids"] == MISSING_IDS
+
+
+def test_enumeration_mixes_explicit_and_inferred_events(ctx):
+    _view_attempts(ctx, MISSING_IDS[:2], reason="DOCUMENT_NOT_FOUND")
+    _view_attempts(ctx, MISSING_IDS[2:])
+    [alert] = _enumeration_alerts(ctx)
+    assert alert.details["document_ids"] == MISSING_IDS
+    assert alert.details["inferred_document_ids"] == MISSING_IDS[2:]
+
+
+def test_older_events_on_ids_still_in_the_index_are_never_counted(ctx):
+    # Ids 2..5 exist; older failures on them may be refusals or missing files.
+    _view_attempts(ctx, [2, 3, 4, 5, 6, 7])
+    assert _enumeration_alerts(ctx) == []
+
+
+def test_existing_document_with_missing_file_is_never_counted(ctx):
+    (ctx["documents_dir"] / "private__credit_risques__loan_book.pdf").unlink()  # id 2
+    _view_attempts(ctx, [2], reason="FILE_NOT_FOUND")
+    _view_attempts(ctx, [2])  # older event on the same id, without reason
+    _view_attempts(ctx, MISSING_IDS[:3])
+    assert _enumeration_alerts(ctx) == []
+
+    _view_attempts(ctx, MISSING_IDS[3:])
+    [alert] = _enumeration_alerts(ctx)
+    assert 2 not in alert.details["document_ids"]
+    assert alert.details["document_ids"] == MISSING_IDS
+
+
+@pytest.mark.parametrize(
+    "index_content",
+    [
+        None,  # index file missing
+        "{not json",  # unreadable
+        '{"next_id": 1, "documents": []}',  # empty: proves nothing
+        '{"documents": {"100": "x.pdf"}}',  # unexpected structure
+    ],
+)
+def test_ambiguous_older_events_are_ignored_without_a_usable_index(ctx, index_content):
+    index_file = ctx["documents_dir"] / document_service.INDEX_NAME
+    if index_content is None:
+        index_file.unlink()
+    else:
+        index_file.write_text(index_content, encoding="utf-8")
+    _view_attempts(ctx, MISSING_IDS)
+    assert _enumeration_alerts(ctx) == []
+
+    # Explicit reasons do not depend on the index.
+    _view_attempts(ctx, [200, 201, 202, 203], reason="DOCUMENT_NOT_FOUND")
+    [alert] = _enumeration_alerts(ctx)
+    assert alert.details["document_ids"] == [200, 201, 202, 203]
+
+
+def test_enumeration_ignores_administrators(ctx):
+    _view_attempts(ctx, MISSING_IDS, reason="DOCUMENT_NOT_FOUND", user="admin")
+    _view_attempts(ctx, [104, 105, 106, 107], user="admin")
+    assert ctx["detect"]() == []
+
+
+def test_enumeration_reads_the_index_without_writing_it(ctx):
+    index_file = ctx["documents_dir"] / document_service.INDEX_NAME
+    (ctx["documents_dir"] / "private__credit_risques__unindexed.pdf").write_bytes(b"%PDF-1.4")
+    before = index_file.read_bytes()
+    _view_attempts(ctx, MISSING_IDS)
+    ctx["detect"]()
+    assert index_file.read_bytes() == before
+
+
+def test_end_to_end_real_not_found_requests_raise_enumeration(ctx):
+    employee = ctx["headers"]("employee")
+    for document_id in MISSING_IDS:
+        assert ctx["client"].get(f"/documents/{document_id}", headers=employee).status_code == 404
+
+    with ctx["session_factory"]() as db:
+        reasons = db.scalars(
+            select(AuditLog.details).where(AuditLog.action == AuditAction.DOCUMENT_VIEW.value)
+        ).all()
+    assert reasons == [{"reason": "DOCUMENT_NOT_FOUND"}] * 4
+
+    alerts = (
+        ctx["client"]
+        .get("/audit/alerts?rule=DOCUMENT_ENUMERATION", headers=ctx["headers"]("admin"))
+        .json()
+    )
+    assert [a["rule"] for a in alerts] == ["DOCUMENT_ENUMERATION"]
+    assert alerts[0]["details"]["document_ids"] == MISSING_IDS
+    assert alerts[0]["details"]["inferred_document_ids"] == []
+
+
+# --- SEARCH_BURST (SEC-01 T5) -------------------------------------------------------
+
+
+def _searches(env, count, *, user="employee", step=timedelta(seconds=1)):
+    env["add"](
+        AuditAction.DOCUMENT_SEARCH,
+        count,
+        user=user,
+        start=NOW - timedelta(minutes=5),
+        step=step,
+        result=AuditResult.SUCCESS,
+        resource_type=ResourceType.DOCUMENT,
+    )
+
+
+def test_search_burst_within_one_minute(ctx):
+    _searches(ctx, 30)
+    alerts = ctx["detect"]()
+    assert _rules(alerts) == [AlertRule.SEARCH_BURST]
+    assert alerts[0].event_count == 30
+    assert alerts[0].threshold == 30
+    assert alerts[0].window_minutes == 1
+    assert alerts[0].user_id == ctx["ids"]["employee"]
+
+
+def test_search_burst_below_threshold(ctx):
+    _searches(ctx, 29)
+    assert ctx["detect"]() == []
+
+
+def test_searches_spread_over_several_minutes_do_not_alert(ctx):
+    _searches(ctx, 30, step=timedelta(seconds=6))  # 30 searches over 3 minutes
+    assert ctx["detect"]() == []
+
+
+def test_search_burst_is_counted_per_user(ctx):
+    _searches(ctx, 15, user="employee")
+    _searches(ctx, 15, user="other")
+    assert ctx["detect"]() == []
+
+
+def test_new_thresholds_are_configurable(ctx, monkeypatch):
+    _searches(ctx, 5)
+    _view_attempts(ctx, MISSING_IDS[:2], reason="DOCUMENT_NOT_FOUND")
+    assert ctx["detect"]() == []
+    monkeypatch.setattr(settings, "alert_search_burst_threshold", 5)
+    monkeypatch.setattr(settings, "alert_document_enumeration_threshold", 2)
+    assert sorted(_rules(ctx["detect"]())) == sorted(
+        [AlertRule.SEARCH_BURST, AlertRule.DOCUMENT_ENUMERATION]
+    )
+
+
+def test_end_to_end_real_searches_raise_search_burst(ctx):
+    employee = ctx["headers"]("employee")
+    for _ in range(30):
+        ctx["client"].get("/documents/search_document?q=zz", headers=employee)
+    alerts = (
+        ctx["client"].get("/audit/alerts?rule=SEARCH_BURST", headers=ctx["headers"]("admin")).json()
+    )
+    assert [a["rule"] for a in alerts] == ["SEARCH_BURST"]
+    assert alerts[0]["user_email"] == "employee@example.com"
+
+
+# --- Non-regression: scenarios compared with the sprint2-ssi detector ----------------
+
+
+def _repeat(env, action, count, *, user, result=AuditResult.FAILURE, resource_id=None, reason=None):
+    env["add"](
+        action,
+        count,
+        user=user,
+        start=NOW - timedelta(minutes=3),
+        step=timedelta(seconds=1),
+        result=result,
+        resource_type=ResourceType.DOCUMENT,
+        resource_id=resource_id,
+        details={"reason": reason} if reason else None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected"),
+    [
+        ("login_failures", {AlertRule.LOGIN_BRUTE_FORCE}),
+        ("admin_functional_failures", set()),
+        ("missing_consecutive_ids", {AlertRule.DOCUMENT_ENUMERATION}),
+        ("fast_searches", {AlertRule.SEARCH_BURST}),
+        ("spread_searches", set()),
+        ("anonymous_rejected_tokens", {AlertRule.TOKEN_ABUSE}),
+        ("admin_route_denials", {AlertRule.ADMIN_FEATURE_PROBING}),
+        ("refused_document_creations", {AlertRule.ADMIN_FEATURE_PROBING}),
+        ("expired_sessions", set()),
+        ("department_refusals", {AlertRule.CROSS_DEPARTMENT_PROBING}),
+    ],
+)
+def test_compared_scenarios_do_not_regress(ctx, scenario, expected):
+    A = AuditAction
+    if scenario == "login_failures":
+        _repeat(ctx, A.LOGIN, 5, user="employee")
+    elif scenario == "admin_functional_failures":
+        _repeat(ctx, A.DOCUMENT_UPDATE, 5, user="admin", resource_id=99)
+        _repeat(ctx, A.DOCUMENT_VIEW, 1, user="admin", resource_id=99)
+    elif scenario == "missing_consecutive_ids":
+        _view_attempts(ctx, [10, 11, 12, 13])
+    elif scenario == "fast_searches":
+        _searches(ctx, 30)
+    elif scenario == "spread_searches":
+        _searches(ctx, 30, step=timedelta(seconds=6))
+    elif scenario == "anonymous_rejected_tokens":
+        _repeat(ctx, A.AUTHENTICATION_FAILED, 10, user=None)
+    elif scenario == "admin_route_denials":
+        _repeat(ctx, A.ACCESS_DENIED, 3, user="employee")
+    elif scenario == "refused_document_creations":
+        _repeat(ctx, A.DOCUMENT_CREATE, 3, user="employee", reason="ROLE_FORBIDDEN")
+    elif scenario == "expired_sessions":
+        _repeat(ctx, A.SESSION_EXPIRED, 50, user=None)
+    elif scenario == "department_refusals":
+        _view_attempts(ctx, [2, 3, 4], reason="DEPARTMENT_FORBIDDEN")
+    assert set(_rules(ctx["detect"]())) == expected
 
 
 # --- Configuration -----------------------------------------------------------------
