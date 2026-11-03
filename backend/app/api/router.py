@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes.audit import router as audit_router
+from app.api.routes.audit_alerts import router as audit_alerts_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.departments import router as departments_router
 from app.api.routes.documents import router as document_router
@@ -13,3 +14,4 @@ api_router.include_router(document_router)
 api_router.include_router(users_router)
 api_router.include_router(departments_router)
 api_router.include_router(audit_router)
+api_router.include_router(audit_alerts_router)
