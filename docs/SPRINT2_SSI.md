@@ -1,8 +1,8 @@
 # Sprint 2 – Volet SSI (US 07, SEC-01, SEC-02)
 
 Projet : Assistant RAG sécurisé pour CashSociety
-Branche : `myyr_feat/audit-logging`
-Version : 0.1 – livrable de sprint (documentation de cadrage et de test ; le code suit)
+Branche : `myyr_feat/sprint2-ssi`
+Version : 0.2 – livrable de sprint (conception, détection d'activité suspecte et tests ; le reste du code suit)
 
 Ce document contient les tâches de conception du sprint : matrice des droits, scénarios de tests, schéma de journalisation, cartographie des données sensibles, politique de minimisation. Les éléments marqués **à confirmer** n'ont pas encore été vérifiés dans le code.
 
@@ -16,13 +16,16 @@ Ce document contient les tâches de conception du sprint : matrice des droits, s
 - Création de comptes par invitation (`/auth/accept-invitation`).
 - Routes documents : liste, ajout, modification, suppression, recherche.
 - Tests : `test_auth.py`, `test_documents.py`.
-- Contrôle de permission par rôle : `require_permission`.
+- Contrôle de permission par rôle : `require_permission` (pour `/audit` et `/users`) et `_require_permission` (pour `/documents`).
+- `documents.py` journalise (résultat `FAILURE`) les refus de rôle et les refus d'accès à un document privé d'un autre département. La liste semble filtrée par département (à confirmer pour la recherche). Le code laisse un document `public` visible aux autres départements.
+- `GET /audit` : filtres action, résultat, période, email, dates, et pagination bornée.
+- Détection d'activité suspecte (règles R1 à R4, `GET /audit/alerts`) et tests associés : ajoutés sur cette branche.
 - Routes backend confirmées : `/audit` (dont `/audit/export`), `/users` (liste, création par invitation, modification, changement de statut), `/departments`, `/documents/{id}/content`.
 
 **Manquant ou à confirmer**
-- `require_permission` lève le 403 sans écrire dans le journal. `documents.py` contient un appel à `log_audit_event` : **à examiner** pour savoir s'il couvre les accès refusés entre départements.
-- Filtres de `GET /audit` (utilisateur, période, action, résultat) : **à vérifier** dans `routes/audit.py`.
-- Détection des comportements suspects : absente.
+- `require_permission` (utilisé par `/audit` et `/users`) lève le 403 **sans écrire dans le journal** : une tentative d'employé sur ces routes ne laisse aucune trace.
+- Les refus d'authentification (jeton absent, invalide, révoqué) ne sont pas journalisés.
+- Comportement de l'admin face aux documents privés d'un autre département : à confirmer.
 - Chat RAG et passerelle LLM : non construits.
 
 ---
@@ -35,14 +38,14 @@ Rôles : `ADMIN`, `EMPLOYEE`. Couches métier (README) : Front Office, Credit & 
 |---|---|---|---|---|
 | Se connecter, accepter une invitation | Autorisé | Autorisé | Autorisé | Autorisé |
 | Se déconnecter, consulter son profil | 401 | Autorisé | Autorisé | Autorisé |
-| Lister, rechercher, consulter un document | 401 | Autorisé | Refus + journalisation | Autorisé (périmètre à confirmer) |
+| Lister, rechercher, consulter un document | 401 | Autorisé | Documents publics : autorisé. Documents privés : refus + journalisation | Autorisé (périmètre à confirmer) |
 | Créer, modifier, supprimer un document | 401 | 403 | 403 | Autorisé |
 | Inviter, modifier, désactiver un utilisateur | 401 | 403 | 403 | Autorisé |
 | Consulter ou exporter les journaux d'audit | 401 | 403 | 403 | Autorisé |
 | Interroger le chat | 401 | Autorisé, filtré à sa couche | Aucune information d'une autre couche | Autorisé, périmètre à confirmer |
 
 Notes
-- Le champ `visibility` (`public` / `private`) existe sur les documents. Sa règle exacte est **à confirmer** dans `documents.py`.
+- Règle de `visibility` observée dans `documents.py` : `public` est visible de tous les départements, `private` du seul département propriétaire. À faire valider par le Product Owner.
 - Tout refus est journalisé : action tentée, résultat `FAILURE`, motif dans le détail.
 
 ---
@@ -56,8 +59,8 @@ Notes
 | RBAC-03 | Jeton réutilisé après déconnexion | 401 | – |
 | RBAC-04 | Compte désactivé avec un jeton encore valide | 401 | – |
 | RBAC-05 | Employé lit un document de son département | 200 | DOCUMENT_VIEW / SUCCESS |
-| RBAC-06 | Employé demande par ID un document d'un autre département | Refus (403 ou 404, voir décision D2), contenu absent | DOCUMENT_VIEW / FAILURE |
-| RBAC-07 | Employé recherche : résultats limités à son département | Aucun résultat d'un autre département | DOCUMENT_SEARCH / SUCCESS |
+| RBAC-06 | Employé demande par ID un document **privé** d'un autre département | Refus (403 ou 404, voir décision D2), contenu absent | DOCUMENT_VIEW / FAILURE |
+| RBAC-07 | Employé recherche : résultats limités à son département et aux documents publics | Aucun document privé d'un autre département | DOCUMENT_SEARCH / SUCCESS |
 | RBAC-08 | Employé tente d'ajouter, modifier ou supprimer un document | 403 | action tentée / FAILURE |
 | RBAC-09 | Employé appelle `/users`, `/audit` | 403 | FAILURE |
 | RBAC-10 | Admin réalise le cycle de vie complet d'un document | 200 / 201 | un événement par action |
@@ -186,7 +189,7 @@ Un refus est enregistré avec `result = FAILURE` et `details.reason` (par exempl
 | D2 | Accès à un document d'un autre département : 403 ou 404 ? | 404 évite de révéler l'existence du document ; dans les deux cas, journaliser |
 | D3 | Trois ou quatre couches métier ? | À aligner avec le Product Owner |
 | D4 | Que fait la requête si l'écriture du journal échoue ? | Échec fermé pour les actions sensibles, tolérance pour la lecture |
-| D5 | Règle exacte de `visibility` (`public` / `private`) | À lire dans `documents.py` |
+| D5 | Règle de `visibility` (`public` / `private`) | Comportement observé : public pour tous, private pour le département propriétaire ; à valider |
 
 ---
 
@@ -200,11 +203,10 @@ Un refus est enregistré avec `result = FAILURE` et `details.reason` (par exempl
 
 ## 10. Reste à faire (suivi d'avancement)
 
-- [ ] Journaliser les refus 403 et les refus entre départements (session séparée)
+- [ ] Journaliser les refus 403 de `/audit` et `/users` (aujourd'hui sans trace)
 - [ ] Migration : `department_id`, `duration_ms`, `details`, index
-- [ ] Vérifier les filtres de `GET /audit` et compléter si besoin
-- [ ] Détection R1 à R4
-- [ ] Tests RBAC-01 à RBAC-15
+- [x] Détection R1 à R4 (service, route `/audit/alerts`, tests)
+- [ ] Tests RBAC-01 à RBAC-15 (en cours : RBAC-01, 03, 04, 08, 09, 12, 13 couverts)
 - [ ] Module de pseudonymisation et passerelle LLM
 - [ ] Tests ND-01 à ND-07
 - [ ] Rapport de tests de sécurité (contrôles vérifiés, résultats, limites)
