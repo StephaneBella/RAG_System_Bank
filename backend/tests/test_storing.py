@@ -71,7 +71,12 @@ def _nodes(count):
     def node(i):
         return SimpleNamespace(
             node_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"node-{i}")),
-            metadata={"source": "doc.pdf", "page": i // 10, "business_layer": "front_office"},
+            metadata={
+                "source": "doc.pdf",
+                "page": i // 10,
+                "doc_type": "prive",
+                "business_layer": "front_office",
+            },
             get_content=lambda metadata_mode, i=i: f"chunk {i} ({metadata_mode.value})",
         )
 
@@ -103,8 +108,9 @@ def test_every_batch_is_sent_once_and_total_is_returned(storing, caplog, count, 
     assert all(call["collection_name"] == "test" and call["wait"] is True for call in calls)
 
     sent_ids = [point.id for call in calls for point in call["points"]]
+    assert len(sent_ids) == count  # every point actually written, none dropped
     assert sent_ids == [node.node_id for node in nodes]
-    assert len(set(sent_ids)) == count
+    assert len(set(sent_ids)) == count  # no duplicate
 
     logged = [r.getMessage() for r in caplog.records if r.name == MODULE]
     assert logged == [f"{size} point(s) écrits dans 'test'" for size in batch_sizes]
@@ -134,6 +140,56 @@ def test_points_carry_vector_text_and_metadata(storing):
         "text": "chunk 0 (none)",
         "source": "doc.pdf",
         "page": 0,
+        "doc_type": "prive",
+        "business_layer": "front_office",
+        "metadata": {
+            "source": "doc.pdf",
+            "page": 0,
+            "doc_type": "prive",
+            "business_layer": "front_office",
+        },
+    }
+
+
+ALLOWED_NESTED = {"source", "page", "doc_type", "business_layer"}
+
+
+def test_nested_metadata_hold_only_the_allowed_fields(storing):
+    nodes, vectors = _nodes(65)
+    for node in nodes:
+        node.metadata["file_path"] = f"/srv/ingestion/data/documents/{node.metadata['source']}"
+        node.metadata["chunk_index"] = 3
+        node.metadata["author"] = "unexpected field"
+    originals = [dict(node.metadata) for node in nodes]
+    client = MagicMock()
+
+    storing.store_nodes(nodes, vectors, client=client, collection="test")
+
+    payloads = [point.payload for call in _upserted(client) for point in call["points"]]
+    assert len(payloads) == 65  # both batches checked
+    for payload, original in zip(payloads, originals, strict=True):
+        nested = payload["metadata"]
+        assert set(nested) == ALLOWED_NESTED  # the four allowed fields, nothing else
+        assert nested == {k: original[k] for k in ALLOWED_NESTED}
+        for key in ("file_path", "chunk_index", "author"):
+            assert key not in nested
+        # The flat payload is unchanged: every metadata, file_path included (SEC-02 § 5.3).
+        assert {k: v for k, v in payload.items() if k not in ("text", "metadata")} == original
+    # Building the nested copy never alters the node metadata.
+    assert [node.metadata for node in nodes] == originals
+
+
+def test_a_missing_allowed_field_is_simply_absent_from_the_nested_copy(storing):
+    nodes, vectors = _nodes(1)
+    del nodes[0].metadata["doc_type"]
+    client = MagicMock()
+
+    storing.store_nodes(nodes, vectors, client=client, collection="test")
+
+    [point] = _upserted(client)[0]["points"]
+    assert point.payload["metadata"] == {
+        "source": "doc.pdf",
+        "page": 0,
         "business_layer": "front_office",
     }
 
@@ -148,7 +204,17 @@ def test_collection_is_prepared_once_with_vector_size(storing):
     client.collection_exists.assert_called_once_with("test")
     client.create_collection.assert_called_once()
     assert client.create_collection.call_args.kwargs["vectors_config"]["size"] == 3
-    assert client.create_payload_index.call_count == 4
+    indexed = {call.args[1]: call.args[2] for call in client.create_payload_index.call_args_list}
+    assert indexed == {
+        "source": "keyword",
+        "doc_type": "keyword",
+        "business_layer": "keyword",
+        "page": "integer",
+        "metadata.source": "keyword",
+        "metadata.doc_type": "keyword",
+        "metadata.business_layer": "keyword",
+        "metadata.page": "integer",
+    }
 
 
 def test_custom_batch_size(storing):
