@@ -23,6 +23,7 @@ class AuditAction(str, Enum):
     ACCESS_DENIED = "ACCESS_DENIED"
     SESSION_EXPIRED = "SESSION_EXPIRED"
     TOKEN_MISSING = "TOKEN_MISSING"
+    LLM_CALL = "LLM_CALL"
 
 
 # For now we can focus only on login and document access audits
@@ -32,6 +33,7 @@ class ResourceType(str, Enum):
     SESSION = "SESSION"
     AUDIT_LOG = "AUDIT_LOG"
     DEPARTMENT = "DEPARTMENT"
+    LLM_GATEWAY = "LLM_GATEWAY"
 
 
 class AuditResult(str, Enum):

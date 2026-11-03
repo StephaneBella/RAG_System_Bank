@@ -79,7 +79,8 @@
     "AUTHENTICATION_FAILED": "Authentication failure",
     "ACCESS_DENIED": "Access denied",
     "SESSION_EXPIRED": "Session expired",
-    "TOKEN_MISSING": "Missing token"
+    "TOKEN_MISSING": "Missing token",
+    "LLM_CALL": "LLM call"
   },
   "auditResults": {
     "SUCCESS": "Success",
@@ -90,7 +91,8 @@
     "USER": "User",
     "SESSION": "Session",
     "AUDIT_LOG": "Audit log",
-    "DEPARTMENT": "Department"
+    "DEPARTMENT": "Department",
+    "LLM_GATEWAY": "LLM gateway"
   },
   "auth": {
     "brand": "Documentary Vault",

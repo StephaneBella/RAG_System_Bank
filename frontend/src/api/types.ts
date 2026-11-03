@@ -113,13 +113,49 @@ export const AUDIT_ACTIONS = [
   'ACCESS_DENIED',
   'SESSION_EXPIRED',
   'TOKEN_MISSING',
+  'LLM_CALL',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-export type AuditResourceType = 'DOCUMENT' | 'USER' | 'SESSION' | 'AUDIT_LOG' | 'DEPARTMENT';
+export type AuditResourceType =
+  | 'DOCUMENT'
+  | 'USER'
+  | 'SESSION'
+  | 'AUDIT_LOG'
+  | 'DEPARTMENT'
+  | 'LLM_GATEWAY';
 
 export type AuditResult = 'SUCCESS' | 'FAILURE';
+
+/** Why an extract was kept out of the LLM context (backend ExclusionReason). */
+export type ContextExclusionReason =
+  | 'EMPTY_TEXT'
+  | 'MISSING_SOURCE'
+  | 'EXCLUDED_SOURCE'
+  | 'MISSING_LAYER'
+  | 'LAYER_NOT_ALLOWED'
+  | 'DUPLICATE'
+  | 'MAX_EXTRACTS'
+  | 'CONTEXT_BUDGET';
+
+/**
+ * Closed list of the gateway fields logged with LLM_CALL (backend services/audit.py):
+ * enum values and counters only, never the question, prompt, answer or sources.
+ */
+export interface AuditLlmCallDetails {
+  outcome: 'ANSWERED' | 'NO_AUTHORIZED_CONTEXT' | 'PROMPT_TOO_LONG' | 'FAILED';
+  failed_stage: 'QUESTION' | 'RETRIEVAL' | 'CONTEXT' | 'ASSEMBLY' | 'PROVIDER' | 'RESTORE' | null;
+  error_type: string | null;
+  received: number | null;
+  retained: number | null;
+  excluded: Partial<Record<ContextExclusionReason, number>>;
+  prompt_chars: number | null;
+  answer_chars: number | null;
+  tokens_restored: number;
+  tokens_withheld: number;
+  gateway_ms: number;
+}
 
 export interface AuditLog {
   id: number;
@@ -136,7 +172,7 @@ export interface AuditLog {
   resource_department_id?: number | null;
   resource_department_name?: string | null;
   duration_ms?: number | null;
-  details?: { reason?: string; document_ids?: number[] } | null;
+  details?: { reason?: string; document_ids?: number[]; llm_call?: AuditLlmCallDetails } | null;
 }
 
 export interface AuditQuery {

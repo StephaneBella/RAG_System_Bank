@@ -16,7 +16,7 @@ vi.mock('@/context/AuthContext', () => ({
 
 const mockedUseAudit = vi.mocked(useAudit);
 const NEW_ACTIONS = ['TOKEN_MISSING', 'AUTHENTICATION_FAILED', 'SESSION_EXPIRED', 'ACCESS_DENIED'];
-const RESOURCE_TYPES = ['DOCUMENT', 'USER', 'SESSION', 'AUDIT_LOG', 'DEPARTMENT'];
+const RESOURCE_TYPES = ['DOCUMENT', 'USER', 'SESSION', 'AUDIT_LOG', 'DEPARTMENT', 'LLM_GATEWAY'];
 
 function log(overrides: Partial<AuditLog>): AuditLog {
   return {
@@ -83,8 +83,8 @@ beforeEach(async () => {
 });
 
 describe('audit translations', () => {
-  it.each(['fr', 'en'])('translates the 15 audit actions in %s', (lng) => {
-    expect(AUDIT_ACTIONS).toHaveLength(15);
+  it.each(['fr', 'en'])('translates the 16 audit actions in %s', (lng) => {
+    expect(AUDIT_ACTIONS).toHaveLength(16);
     for (const action of AUDIT_ACTIONS) {
       // getResource ignores the fallback language: each locale must define the key itself.
       const label = i18n.getResource(lng, 'translation', `auditActions.${action}`);
@@ -107,8 +107,18 @@ describe('audit translations', () => {
   });
 });
 
+describe('LLM gateway audit labels', () => {
+  it.each([
+    ['fr', 'Appel au LLM', 'Passerelle LLM'],
+    ['en', 'LLM call', 'LLM gateway'],
+  ])('labels LLM_CALL and LLM_GATEWAY in %s', (lng, action, resource) => {
+    expect(i18n.getResource(lng, 'translation', 'auditActions.LLM_CALL')).toBe(action);
+    expect(i18n.getResource(lng, 'translation', 'resourceTypes.LLM_GATEWAY')).toBe(resource);
+  });
+});
+
 describe('AdminAuditPage', () => {
-  it('offers the 15 actions in the event filter', () => {
+  it('offers the 16 actions in the event filter', () => {
     renderPage();
     const options = Array.from(actionSelect().options);
     expect(options.map((option) => option.value)).toEqual(['ALL', ...AUDIT_ACTIONS]);
@@ -205,5 +215,45 @@ describe('AdminAuditPage', () => {
     expect(lastParams().date_to).toBeUndefined();
     expect(screen.getByLabelText('Du')).toHaveValue('');
     expect(screen.getByLabelText('Au')).toHaveValue('');
+  });
+
+  it('offers LLM_CALL in the event filter with its translated label', () => {
+    renderPage();
+    const option = Array.from(actionSelect().options).find((o) => o.value === 'LLM_CALL');
+    expect(option?.textContent).toBe('Appel au LLM');
+  });
+
+  it('filters on LLM_CALL', () => {
+    mockRows([log({})]);
+    renderPage();
+    goToPage2();
+
+    fireEvent.change(actionSelect(), { target: { value: 'LLM_CALL' } });
+
+    expect(lastParams()).toMatchObject({ action: 'LLM_CALL', page: 1 });
+  });
+
+  it('displays an LLM gateway event with its labels, never its raw keys', () => {
+    const details: AuditLog['details'] = {
+      llm_call: {
+        outcome: 'ANSWERED',
+        failed_stage: null,
+        error_type: null,
+        received: 5,
+        retained: 1,
+        excluded: { DUPLICATE: 1, LAYER_NOT_ALLOWED: 3 },
+        prompt_chars: 120,
+        answer_chars: 40,
+        tokens_restored: 1,
+        tokens_withheld: 0,
+        gateway_ms: 12,
+      },
+    };
+    mockRows([log({ action: 'LLM_CALL', resource_type: 'LLM_GATEWAY', result: 'SUCCESS', details })]);
+    renderPage();
+    const table = screen.getByRole('table');
+    expect(table).toHaveTextContent('Appel au LLM');
+    expect(table).toHaveTextContent('Passerelle LLM');
+    expect(table.textContent).not.toMatch(/auditActions\.|resourceTypes\./);
   });
 });

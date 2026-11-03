@@ -79,7 +79,8 @@
     "AUTHENTICATION_FAILED": "Échec d'authentification",
     "ACCESS_DENIED": "Accès refusé",
     "SESSION_EXPIRED": "Session expirée",
-    "TOKEN_MISSING": "Jeton absent"
+    "TOKEN_MISSING": "Jeton absent",
+    "LLM_CALL": "Appel au LLM"
   },
   "auditResults": {
     "SUCCESS": "Succès",
@@ -90,7 +91,8 @@
     "USER": "Utilisateur",
     "SESSION": "Session",
     "AUDIT_LOG": "Journal d'audit",
-    "DEPARTMENT": "Département"
+    "DEPARTMENT": "Département",
+    "LLM_GATEWAY": "Passerelle LLM"
   },
   "auth": {
     "brand": "Coffre-fort Documentaire",

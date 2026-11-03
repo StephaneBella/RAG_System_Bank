@@ -1,3 +1,4 @@
+import builtins
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -11,6 +12,74 @@ from app.models.department import Department
 from app.models.user import User
 from app.schemas.audit import AuditLogResponse
 from app.schemas.pagination import Page
+from app.services.llm_gateway import GatewayReport, Outcome, Stage
+from app.services.rag_context import ContextStats, ExclusionReason
+
+# US 07 T5: an answered call, or one stopped on purpose before the provider, is a success.
+LLM_CALL_RESULTS = {
+    Outcome.ANSWERED: AuditResult.SUCCESS,
+    Outcome.NO_AUTHORIZED_CONTEXT: AuditResult.SUCCESS,
+    Outcome.PROMPT_TOO_LONG: AuditResult.SUCCESS,
+    Outcome.FAILED: AuditResult.FAILURE,
+}
+
+
+def _count(value: object, name: str, *, optional: bool = False) -> int | None:
+    if value is None and optional:
+        return None
+    if type(value) is not int or value < 0:
+        raise ValueError(f"gateway report {name} must be a non-negative int")
+    return value
+
+
+def _safe_error_type(name: object) -> str:
+    """A built-in exception name, otherwise ComponentError: never a custom class name."""
+    if type(name) is str:
+        kind = getattr(builtins, name, None)
+        if isinstance(kind, type) and issubclass(kind, BaseException):
+            return name
+    return "ComponentError"
+
+
+def _llm_call_details(report: GatewayReport) -> dict[str, object]:
+    """The closed list of logged gateway fields: enum values and integers, never text.
+
+    The question, its length (decision H8 is open), the prompt, the answer, values,
+    tokens and source names are never logged. Discarded extracts are counted by reason.
+    """
+    if not isinstance(report, GatewayReport):
+        raise TypeError(f"llm_call must be a GatewayReport, not {type(report).__name__}")
+    if not isinstance(report.outcome, Outcome):
+        raise TypeError("gateway report outcome is not a gateway outcome")
+    failed = report.outcome is Outcome.FAILED
+    if report.failed_stage is not None and not isinstance(report.failed_stage, Stage):
+        raise ValueError("gateway report failed_stage is not a gateway stage")
+    if failed != (report.failed_stage is not None) or (
+        not failed and report.error_type is not None
+    ):
+        raise ValueError("gateway report outcome, stage and error type are inconsistent")
+    context = report.context
+    if context is not None and not isinstance(context, ContextStats):
+        raise ValueError("gateway report context must be context counters")
+    excluded: dict[str, int | None] = {}
+    if context is not None:
+        for reason, count in context.excluded.items():
+            if not isinstance(reason, ExclusionReason):
+                raise TypeError("gateway report exclusion reasons must be exclusion reasons")
+            excluded[reason.value] = _count(count, "exclusion count")
+    return {
+        "outcome": report.outcome.value,
+        "failed_stage": report.failed_stage.value if report.failed_stage is not None else None,
+        "error_type": _safe_error_type(report.error_type) if failed else None,
+        "received": _count(context.received, "received") if context is not None else None,
+        "retained": _count(context.retained, "retained") if context is not None else None,
+        "excluded": dict(sorted(excluded.items())),
+        "prompt_chars": _count(report.prompt_chars, "prompt_chars", optional=True),
+        "answer_chars": _count(report.answer_chars, "answer_chars", optional=True),
+        "tokens_restored": _count(report.tokens_restored, "tokens_restored"),
+        "tokens_withheld": _count(report.tokens_withheld, "tokens_withheld"),
+        "gateway_ms": _count(report.duration_ms, "duration_ms"),
+    }
 
 
 def log_audit_event(
@@ -25,16 +94,20 @@ def log_audit_event(
     resource_department_id: int | None = None,
     reason: AuditReason | None = None,
     document_ids: Sequence[int] | None = None,
+    llm_call: GatewayReport | None = None,
 ) -> None:
     """Persist an audit event without storing credentials or tokens.
 
-    details is built from an enum and integer ids only, so it can never hold free text.
+    details is built from enums, integer ids and the closed list of gateway counters
+    only, so it can never hold free text.
     """
     details: dict[str, object] = {}
     if reason is not None:
         details["reason"] = reason.value
     if document_ids is not None:
         details["document_ids"] = [int(document_id) for document_id in document_ids]
+    if llm_call is not None:
+        details["llm_call"] = _llm_call_details(llm_call)
 
     event = AuditLog(
         user_id=user.id if user is not None else None,
@@ -51,6 +124,38 @@ def log_audit_event(
     )
     db.add(event)
     db.flush()
+
+
+def log_gateway_call(
+    db: Session, *, user: User, report: GatewayReport, ip_address: str | None
+) -> None:
+    """Persist one call to the LLM gateway (US 07 T5, MIN-LLM-09) as a single event.
+
+    The gateway stays independent of HTTP and of the database: its caller (a future
+    route) passes the report of ``ask``, or of the ``GatewayError`` it raised, with the
+    authenticated user and the client address, then commits. The report must belong to
+    that user: its ``caller_id`` has to be the user's id.
+    """
+    if not isinstance(user, User):
+        raise TypeError(f"user must be a User, not {type(user).__name__}")
+    if not isinstance(report, GatewayReport):
+        raise TypeError(f"report must be a GatewayReport, not {type(report).__name__}")
+    if type(report.caller_id) is not int or report.caller_id != user.id:
+        raise ValueError("gateway report caller_id does not match the user")
+    if not isinstance(report.outcome, Outcome):
+        raise TypeError("gateway report outcome is not a gateway outcome")
+    if ip_address is not None and type(ip_address) is not str:
+        raise TypeError(f"ip_address must be a str, not {type(ip_address).__name__}")
+    log_audit_event(
+        db,
+        user=user,
+        action=AuditAction.LLM_CALL,
+        resource_type=ResourceType.LLM_GATEWAY,
+        resource_id=None,
+        result=LLM_CALL_RESULTS[report.outcome],
+        ip_address=ip_address,
+        llm_call=report,
+    )
 
 
 PERIODS = {"today", "last7", "last30", "month"}

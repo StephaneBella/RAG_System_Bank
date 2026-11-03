@@ -13,6 +13,9 @@ from app.core.config import settings
 from app.models.audit_log import AuditAction, AuditLog, AuditResult, ResourceType
 from app.models.department import Department
 from app.models.user import User
+from app.services.audit import log_gateway_call
+from app.services.llm_gateway import GatewayError, Outcome, ask
+from app.services.rag_context import RetrievedChunk
 
 PASSWORD = "Password123"
 ANY_EMAIL = "admin@example.com"
@@ -239,6 +242,51 @@ def _token_missing(env):
     _expect(env["client"].get("/audit"), 401)
 
 
+class _Provider:
+    def __init__(self, error=None):
+        self.error = error
+
+    def complete(self, prompt, *, timeout_seconds):
+        if self.error is not None:
+            raise self.error
+        return "Réponse."
+
+
+def _llm_call(env, provider, outcome):
+    """A real gateway call (no HTTP route exists yet, I-4), logged by log_gateway_call."""
+    actor_id = env["ids"]["employee_a"]
+    try:
+        report = ask(
+            "Quelle est la procédure ?",
+            allowed_layers=["layer_a"],
+            excluded_sources=["Prive__Direction_Generale_Strategie.pdf"],
+            max_extracts=3,
+            max_context_chars=1000,
+            max_prompt_chars=1000,
+            timeout_seconds=5,
+            retriever=lambda question: [
+                RetrievedChunk("Procédure.", {"source": "a.pdf", "business_layer": "layer_a"})
+            ],
+            assembler=lambda question, extracts: question,
+            provider=provider,
+            caller_id=actor_id,
+        ).report
+    except GatewayError as error:
+        report = error.report
+    assert report.outcome is outcome
+    with env["session_factory"]() as db:
+        log_gateway_call(db, user=db.get(User, actor_id), report=report, ip_address="203.0.113.5")
+        db.commit()
+
+
+def _llm_call_success(env):
+    _llm_call(env, _Provider(), Outcome.ANSWERED)
+
+
+def _llm_call_failure(env):
+    _llm_call(env, _Provider(error=RuntimeError("provider down")), Outcome.FAILED)
+
+
 A, R, T = AuditAction, AuditResult, ResourceType
 SCENARIOS = [
     Scenario(A.LOGIN, R.SUCCESS, "employee_a", T.USER, _login_success),
@@ -264,12 +312,14 @@ SCENARIOS = [
     Scenario(A.ACCESS_DENIED, R.FAILURE, "employee_a", T.AUDIT_LOG, _access_denied),
     Scenario(A.SESSION_EXPIRED, R.FAILURE, None, T.SESSION, _session_expired),
     Scenario(A.TOKEN_MISSING, R.FAILURE, None, T.SESSION, _token_missing),
+    Scenario(A.LLM_CALL, R.SUCCESS, "employee_a", T.LLM_GATEWAY, _llm_call_success),
+    Scenario(A.LLM_CALL, R.FAILURE, "employee_a", T.LLM_GATEWAY, _llm_call_failure),
 ]
 SCENARIO_IDS = [f"{s.action.value}-{s.result.value}" for s in SCENARIOS]
 
 
 def test_every_audit_action_has_a_scenario():
-    assert len(SCENARIOS) == 23
+    assert len(SCENARIOS) == 25
     assert {s.action for s in SCENARIOS} == set(AuditAction)
     assert len(set(SCENARIO_IDS)) == len(SCENARIOS)
 

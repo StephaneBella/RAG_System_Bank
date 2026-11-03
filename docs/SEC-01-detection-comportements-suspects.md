@@ -40,7 +40,7 @@ Sévérité : `HIGH` si pic ≥ 2 × seuil, sinon `MEDIUM`.
 | **R2 `REPEATED_FORBIDDEN`** | Union des événements R3 résolus, R4 et `ACCESS_DENIED` | `user_id` | 10 en 30 min |
 | **R3 `CROSS_DEPARTMENT_PROBING`** | `DOCUMENT_VIEW` + `FAILURE` d'un EMPLOYEE, document résolu dans un autre département existant | `user_id` | 3 documents **distincts** en 30 min ; HIGH si ≥ 2 départements étrangers |
 | **R4 `ADMIN_FEATURE_PROBING`** | `ACCESS_DENIED` ; `DOCUMENT_CREATE/UPDATE/DELETE` + `FAILURE` d'un EMPLOYEE | `user_id` | 3 en 60 min |
-| **R5 `ACTIVITY_SPIKE`** | Tous les événements de l'utilisateur | `user_id` | voir formule |
+| **R5 `ACTIVITY_SPIKE`** | Tous les événements de l'utilisateur, appels à la passerelle LLM (`LLM_CALL`) compris | `user_id` | voir formule |
 | **`DOCUMENT_ENUMERATION`** | `DOCUMENT_VIEW` + `FAILURE` d'un EMPLOYEE sur un document **inexistant** (voir garde-fous) | `user_id` | 4 identifiants **distincts** en 30 min (`ALERT_DOCUMENT_ENUMERATION_*`) |
 | **`SEARCH_BURST`** | `DOCUMENT_SEARCH` | `user_id` | 30 en 1 min (`ALERT_SEARCH_BURST_*`) |
 
@@ -114,6 +114,17 @@ Notations : `t` instant d'évaluation, `L` période d'analyse, `W` fenêtre
 
 L'historique n'est chargé que pour les utilisateurs dont `p(u) ≥ N_min`.
 
+**Appels à la passerelle LLM.** R5 compte tous les événements de l'utilisateur
+sans filtre d'action : les événements `LLM_CALL` (voir « Format du journal »)
+entrent donc dans le pic et dans l'historique, quel que soit leur résultat. Avec
+les valeurs par défaut (`ALERT_SPIKE_MIN_EVENTS=60`,
+`ALERT_SPIKE_WINDOW_MINUTES=10`), une alerte est levée à partir de **60 événements
+en 10 minutes**, ou davantage si l'historique de l'utilisateur relève le seuil
+(`F · μ(u)`). Un usage **légitime et intensif** du chat peut donc déclencher une
+alerte `ACTIVITY_SPIKE` ; à l'inverse, un usage régulier du chat élève la moyenne
+de référence de l'utilisateur. Les autres règles filtrent des actions précises et
+ne comptent jamais `LLM_CALL` (vérifié par `backend/tests/test_gateway_audit.py`).
+
 ## Index
 
 Migration `3a6cb1fbc969` : index `ix_audit_logs_timestamp` sur
@@ -129,7 +140,7 @@ inchangées). Champs ajoutés à `audit_logs`, exposés par `GET /audit` et l'ex
 | `user_department_id` | Département de l'**utilisateur** au moment de l'événement (instantané, conservé s'il change ensuite de département) ; `NULL` pour un événement anonyme. Pour un `LOGIN` en échec, il s'agit du département du **compte visé** (comme `user_id`), pas nécessairement de celui de l'auteur réel de la tentative ; `NULL` si l'email est inconnu. |
 | `resource_department_id` | Département du **document concerné**, uniquement quand la route a identifié le document et que le jeton de département de son nom de fichier correspond exactement à un département en base (règle existante de la bibliothèque) ; sinon `NULL`. Jamais déduit de l'utilisateur. |
 | `duration_ms` | Temps écoulé entre la réception de la requête et l'écriture de l'événement (middleware `RequestTimingMiddleware`) ; `NULL` hors requête HTTP. |
-| `details` | JSON structuré uniquement : `reason` (motif de refus) et/ou `document_ids` (identifiants des documents de la page renvoyée par une recherche). Aucun texte libre, aucun texte de recherche, aucun contenu. |
+| `details` | JSON structuré uniquement : `reason` (motif de refus) et/ou `document_ids` (identifiants des documents de la page renvoyée par une recherche), ou `llm_call` pour un appel à la passerelle LLM (voir ci-dessous). Aucun texte libre, aucun texte de recherche, aucun contenu. |
 
 `resource_department_id` est renseigné pour `DOCUMENT_VIEW` sur un document identifié
 (succès, refus `DEPARTMENT_FORBIDDEN`, fichier absent) et pour les `DOCUMENT_CREATE`,
@@ -149,6 +160,61 @@ Motifs de refus et d'échec (`AuditReason`, liste fermée) :
 | `INVALID_CREDENTIALS` | `LOGIN` en échec (email inconnu, mauvais mot de passe ou compte inactif, non distingués) |
 | `DOCUMENT_NOT_FOUND` | `DOCUMENT_VIEW` en échec : identifiant absent de l'index (404) |
 | `FILE_NOT_FOUND` | `DOCUMENT_VIEW` en échec : document existant dont le fichier est absent (404). **Non atteignable actuellement**, voir Limites. |
+
+### Appels à la passerelle LLM (`LLM_CALL`)
+
+Chaque appel à la passerelle interne (`backend/app/services/llm_gateway.py`, US 07 T5)
+est journalisé par `log_gateway_call` (`backend/app/services/audit.py`) en **un seul
+événement**, à partir du compte rendu que la passerelle renvoie (ou que porte la
+`GatewayError` levée). La passerelle reste indépendante de HTTP et de la base :
+c'est son appelant qui fournit l'utilisateur authentifié et l'IP, puis valide la
+transaction.
+
+| Champ | Valeur |
+|---|---|
+| `action` | `LLM_CALL` |
+| `resource_type` | `LLM_GATEWAY` |
+| `resource_id` | `NULL` |
+| `user_id`, `user_department_id` | L'utilisateur authentifié. Le `caller_id` du compte rendu doit être son identifiant, sinon l'appel est refusé et rien n'est écrit. |
+| `resource_department_id` | `NULL` : les couches métier ne sont pas reliées aux départements |
+| `duration_ms` | Comme pour les autres événements (`NULL` hors requête HTTP) ; la durée propre à la passerelle est dans `details.llm_call.gateway_ms` |
+| `result` | Selon l'issue de l'appel, voir ci-dessous |
+
+| Issue (`outcome`) | `result` |
+|---|---|
+| `ANSWERED` : réponse du fournisseur, restaurée | `SUCCESS` |
+| `NO_AUTHORIZED_CONTEXT` : aucun extrait autorisé, fournisseur non appelé | `SUCCESS` |
+| `PROMPT_TOO_LONG` : prompt au-delà de la limite, fournisseur non appelé | `SUCCESS` |
+| `FAILED` : échec d'une étape (récupérateur, assembleur, fournisseur…) | `FAILURE` |
+
+`details` ne contient que la clé `llm_call`, une **liste fermée de 11 clés** :
+
+| Clé | Contenu |
+|---|---|
+| `outcome` | `ANSWERED`, `NO_AUTHORIZED_CONTEXT`, `PROMPT_TOO_LONG` ou `FAILED` |
+| `failed_stage` | `QUESTION`, `RETRIEVAL`, `CONTEXT`, `ASSEMBLY`, `PROVIDER` ou `RESTORE` en cas d'échec ; sinon `null` |
+| `error_type` | En cas d'échec, nom d'une exception intégrée à Python (`TimeoutError`…) ou `ComponentError` pour toute autre classe, y compris un nom forgé dans le compte rendu ; sinon `null` |
+| `received`, `retained` | Nombre d'extraits reçus du récupérateur et retenus dans le contexte ; `null` si l'appel a échoué avant la constitution du contexte |
+| `excluded` | Nombre d'extraits écartés **par motif** (`EMPTY_TEXT`, `MISSING_SOURCE`, `EXCLUDED_SOURCE`, `MISSING_LAYER`, `LAYER_NOT_ALLOWED`, `DUPLICATE`, `MAX_EXTRACTS`, `CONTEXT_BUDGET`) ; seuls les motifs rencontrés figurent ; `{}` sinon |
+| `prompt_chars`, `answer_chars` | Taille en caractères du prompt assemblé et de la réponse du fournisseur ; `null` si l'étape n'a pas été atteinte |
+| `tokens_restored`, `tokens_withheld` | Nombre de jetons de pseudonymisation effectivement restaurés dans la réponse, et laissés tels quels (absents du prompt envoyé) |
+| `gateway_ms` | Durée de l'appel mesurée par la passerelle |
+
+Seules des **valeurs d'énumération, des entiers non négatifs et `null`** sont
+journalisés. Un compte rendu incohérent (issue, étape et type d'erreur discordants,
+compteur négatif ou non entier, type inattendu) est refusé **avant toute écriture**.
+
+**Données interdites, jamais journalisées** : la question, sa longueur (décision
+H8 ouverte), le prompt, la réponse, les valeurs sensibles (noms, emails,
+identifiants…), les jetons de pseudonymisation et les noms de sources. Les extraits
+écartés ne sont pas journalisés un par un : ils sont seulement comptés par motif.
+
+Aucune migration : les valeurs `LLM_CALL` et `LLM_GATEWAY` tiennent dans les
+colonnes `String(50)` existantes, et `details` est déjà une colonne `JSON`.
+L'action est filtrable par `GET /audit?action=LLM_CALL`, incluse dans l'export
+CSV, et affichée sous les libellés « Appel au LLM » et « Passerelle LLM » dans
+l'interface d'audit. Tests : `backend/tests/test_gateway_audit.py` et les scénarios
+`LLM_CALL` de `backend/tests/test_audit_traceability.py`.
 
 Les couches de l'ingestion RAG (`business_layer`) ne sont **pas** reliées aux
 départements : leurs identifiants diffèrent (`credit_risques` / `Credit & Risques`,
@@ -171,6 +237,13 @@ départements : leurs identifiants diffèrent (`credit_risques` / `Credit & Risq
   proxy, les règles par IP perdent leur sens.
 - Seuils empiriques, à ajuster en recette ; R5 peut être contourné par une
   montée progressive de l'activité.
+- **Journalisation des appels LLM non branchée en production** :
+  `log_gateway_call` existe et est testée, mais aucune route `/chat` ne l'appelle
+  encore. La journalisation effective des appels à la passerelle dépend donc de
+  la création de l'endpoint RAG (tâche I-4) ; d'ici là, aucun événement
+  `LLM_CALL` n'est produit en dehors des tests.
+- R5 compte les appels `LLM_CALL` : un usage légitime et intensif du chat peut
+  produire une alerte `ACTIVITY_SPIKE`.
 - R1a et R1b peuvent produire deux alertes (compte et IP) pour une même rafale ;
   R1b peut produire deux alertes pour une même IP (jetons rejetés, jetons absents).
 - Un changement de `JWT_SECRET_KEY` invalide tous les jetons en cours et peut
