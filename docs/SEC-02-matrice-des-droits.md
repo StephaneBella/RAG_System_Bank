@@ -119,19 +119,27 @@ Exécution : `cd backend && uv run pytest`.
   la détection (`GET /audit/alerts`) les signale mais ne les bloque pas.
 - Les permissions sont déclarées dans plusieurs dictionnaires `ROLE_PERMISSIONS`
   répartis par route ; il n'existe pas encore de source unique.
-- Le chat RAG n'existe pas encore : les tests de non-divulgation et de
-  cloisonnement inter-couches via le chat (SEC-02) restent à écrire. Les
+- Le chat RAG n'existe pas encore : aucune route ne l'expose (I-4) et aucun
+  fournisseur LLM n'est choisi (H1). La passerelle interne
+  (`backend/app/services/llm_gateway.py`) existe et est testée comme service, avec
+  un faux fournisseur (voir § 5.5) ; les tests de non-divulgation et de
+  cloisonnement inter-couches **via le chat** (SEC-02) restent à écrire. Les
   identifiants de couche du pipeline RAG (`business_layer` dans
   `Agentic_RAG/Data_preparation/ingestion.py`) ne correspondent pas encore aux
   noms de départements en base.
 
 ## 5. SEC-02 T4 — Non-divulgation et résistance à l'injection (clôture partielle)
 
-Aucun prompt n'est aujourd'hui construit ni envoyé à un fournisseur LLM : les
+Aucun prompt n'est aujourd'hui envoyé à un véritable fournisseur LLM : les
 modules `rag_agent.py`, `retriever_tools.py` et `augmentation_tool.py` sont vides,
-aucun client LLM ni passerelle n'existe et l'API n'expose aucune route chat/RAG.
-SEC-02 T4 est donc **close partiellement** : seuls des contrôles **amont**, sur la
-préparation des données (`Agentic_RAG/Data_preparation/`), sont réalisés.
+aucun client LLM n'existe (H1) et l'API n'expose aucune route chat/RAG (I-4). La
+passerelle interne (US 07 T5) construit en revanche un prompt et l'envoie à un
+fournisseur **fourni par l'appelant** : elle est testée avec un faux fournisseur qui
+capture le prompt réellement transmis (§ 5.5). SEC-02 T4 reste **close
+partiellement** : contrôles **amont** sur la préparation des données
+(`Agentic_RAG/Data_preparation/`, §§ 5.1 à 5.3) et contrôles **au niveau de la
+passerelle** (§ 5.5) ; la résistance à l'injection face à un vrai modèle reste à
+tester. Bilan complet : `docs/SEC-02-rapport-tests-securite.md`.
 
 ### 5.1 Contrôles réalisés
 
@@ -168,6 +176,12 @@ le divulguerait. Ce constat est vérifié par
 `test_n3_known_finding_file_path_is_stored_in_qdrant` et **n'est pas corrigé** ; il
 relève de la minimisation du contexte (US 7, T4).
 
+Mise à jour (SEC-02 T6) : la minimisation du contexte (`rag_context.py`, US 7 T4)
+ne transmet que `source` et `page` et écarte toujours `file_path`
+(`tests/test_rag_context.py::test_internal_metadata_are_never_sent_even_with_a_vault`,
+`tests/test_llm_gateway.py::test_internal_metadata_never_reach_the_assembler`). Le
+**stockage** de `file_path` dans Qdrant reste, lui, inchangé (tâche I-1).
+
 ### 5.4 Scénarios en attente de l'endpoint RAG/chat et de la passerelle
 
 Ils nécessitent la récupération (I-2), la construction du prompt (I-3), l'endpoint
@@ -176,13 +190,43 @@ pseudonymisation, la minimisation et la passerelle (US 7, T3 à T5). Ils seront
 testés avec un faux fournisseur LLM qui capture les prompts, sur un corpus
 synthétique contenant un marqueur unique par couche :
 
-| Scénario | Critère de réussite |
-|---|---|
-| Question dont la réponse est dans une autre couche | Aucun extrait de cette couche dans le prompt capturé ni dans la réponse |
-| Filtrage avant **et** après récupération | Un extrait hors couche est écarté avant l'envoi au fournisseur |
-| Plusieurs tours de conversation | Le filtre s'applique à chaque tour |
-| Énumération (« le document X existe-t-il ? ») | La réponse ne confirme pas l'existence d'un document refusé |
-| Données sensibles dans les extraits | Aucune donnée sensible non masquée ni métadonnée interne (`file_path`…) dans le prompt capturé |
-| Injection directe dans la question | Aucun document hors couche, aucun contournement des consignes |
-| Injection indirecte dans un document autorisé | La consigne cachée n'est pas exécutée et l'incident est journalisé |
-| Jeton absent, invalide ou d'un autre rôle | 401/403 et **aucun** appel au fournisseur |
+| Scénario | Critère de réussite | État (SEC-02 T6) |
+|---|---|---|
+| Question dont la réponse est dans une autre couche | Aucun extrait de cette couche dans le prompt capturé ni dans la réponse | 🟡 Démontré pour le **prompt capturé** au niveau de la passerelle (§ 5.5) ; réponse d'un vrai modèle et parcours via le chat en attente (H1, I-2, I-4) |
+| Filtrage avant **et** après récupération | Un extrait hors couche est écarté avant l'envoi au fournisseur | 🟡 **Après** récupération : démontré (§ 5.5) ; **avant** (filtre dans la requête Qdrant) : en attente (I-5, H10) |
+| Plusieurs tours de conversation | Le filtre s'applique à chaque tour | 🟡 Démontré requête par requête (§ 5.5) ; conversation à plusieurs tours en attente (I-4, décision D3) |
+| Énumération (« le document X existe-t-il ? ») | La réponse ne confirme pas l'existence d'un document refusé | ⏳ En attente (I-4, H1). Seul fait démontré : sans extrait autorisé, le fournisseur n'est pas appelé |
+| Données sensibles dans les extraits | Aucune donnée sensible non masquée ni métadonnée interne (`file_path`…) dans le prompt capturé | ✅ Démontré au niveau de la passerelle (§ 5.5), pour les valeurs que T3 détecte ou que l'appelant déclare |
+| Injection directe dans la question | Aucun document hors couche, aucun contournement des consignes | ⏳ En attente d'un vrai modèle (H1). Le contenu hors couche n'atteint jamais le prompt, ce qui n'est pas une preuve de résistance à l'injection |
+| Injection indirecte dans un document autorisé | La consigne cachée n'est pas exécutée et l'incident est journalisé | ⏳ En attente (H1) ; aucune détection d'injection n'est prévue dans la passerelle (décision D1) |
+| Jeton absent, invalide ou d'un autre rôle | 401/403 et **aucun** appel au fournisseur | ⏳ En attente de la route authentifiée (I-4) |
+
+### 5.5 Contrôles au niveau de la passerelle (US 7, T3 à T5)
+
+Fichiers : `backend/app/services/llm_gateway.py`, `rag_context.py`,
+`pseudonymization.py` ; tests `backend/tests/test_llm_gateway.py` (98),
+`test_rag_context.py` (121), `test_pseudonymization.py` (109),
+`test_gateway_audit.py` (27). Un **faux fournisseur** capture le prompt réellement
+transmis ; un **faux récupérateur** renvoie des extraits synthétiques portant un
+marqueur unique par couche. Aucune route, aucun vrai modèle.
+
+| Contrôle | Vérifie | Tests |
+|---|---|---|
+| Cloisonnement dans le prompt | Aucun extrait d'une autre couche, d'une source exclue (note C3), sans couche ou sans source dans le prompt capturé ; filtre réappliqué à chaque requête | `test_llm_gateway.py::test_only_authorised_layers_reach_the_captured_prompt`, `::test_each_request_applies_its_own_layer_filter` |
+| Question protégée | Noms déclarés, email et IBAN absents de la question reçue par le récupérateur et l'assembleur, et du prompt | `test_llm_gateway.py::test_the_question_is_protected_before_retrieval_and_assembly` |
+| Métadonnées | Seules `source` et `page` sont transmises ; jamais `file_path`, `chunk_index` ni identifiant | `test_llm_gateway.py::test_internal_metadata_never_reach_the_assembler` |
+| Pas d'appel inutile | Aucun appel au fournisseur sans extrait autorisé, ni au-delà de la taille maximale du prompt | `::test_no_authorised_context_means_no_provider_call`, `::test_a_prompt_over_the_limit_is_refused_without_provider_call` |
+| Restauration | Seuls les jetons présents dans le prompt envoyé sont restaurés, en un seul passage ; jetons étrangers, inventés ou d'une requête précédente laissés tels quels | `::test_only_tokens_of_the_sent_prompt_are_restored`, `::test_a_token_of_a_previous_request_is_never_restored`, `::test_restore_is_called_once_per_answer` |
+| Données après la requête | Table de pseudonymisation abandonnée après succès, erreur ou interruption ; aucune question brute ni valeur connue dans les cadres conservés | `::test_any_failure_drops_the_vault_and_hides_the_original_error`, `::test_v1_…`, `::test_v2_…`, `::test_v3_…` |
+| Journalisation | Un événement `LLM_CALL` sans contenu par appel ; extraits écartés comptés par motif | `test_gateway_audit.py` (27), scénarios `LLM_CALL` de `test_audit_traceability.py` |
+
+Limites de ces contrôles :
+
+- Ils portent sur le **prompt capturé**, pas sur la réponse d'un vrai modèle.
+- Les couches autorisées sont fournies par l'appelant : leur calcul à partir de
+  l'utilisateur connecté n'existe pas (H10).
+- La passerelle n'est appelée par aucune route (I-4) : aucune de ces garanties ne
+  s'applique encore à un parcours utilisateur réel.
+- Les données sensibles non déclarées et non détectées par T3 (noms sans liste de
+  valeurs connues, adresses, téléphones nationaux) ne sont pas masquées
+  (décisions D1 à D3 de T3).
