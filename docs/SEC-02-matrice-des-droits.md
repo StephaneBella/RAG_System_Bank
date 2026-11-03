@@ -124,3 +124,65 @@ Exécution : `cd backend && uv run pytest`.
   identifiants de couche du pipeline RAG (`business_layer` dans
   `Agentic_RAG/Data_preparation/ingestion.py`) ne correspondent pas encore aux
   noms de départements en base.
+
+## 5. SEC-02 T4 — Non-divulgation et résistance à l'injection (clôture partielle)
+
+Aucun prompt n'est aujourd'hui construit ni envoyé à un fournisseur LLM : les
+modules `rag_agent.py`, `retriever_tools.py` et `augmentation_tool.py` sont vides,
+aucun client LLM ni passerelle n'existe et l'API n'expose aucune route chat/RAG.
+SEC-02 T4 est donc **close partiellement** : seuls des contrôles **amont**, sur la
+préparation des données (`Agentic_RAG/Data_preparation/`), sont réalisés.
+
+### 5.1 Contrôles réalisés
+
+Fichier : `backend/tests/test_rag_ingestion_security.py` (`llama_index`,
+`qdrant_client` et `dotenv` remplacés par des modules factices ; aucun serveur
+contacté ; aucun code de production modifié).
+
+| Contrôle | Vérifie | Tests |
+|---|---|---|
+| **N1** Étiquetage obligatoire | Un PDF absent du registre `DOCUMENTS_METADATA` est refusé à l'ingestion ; chaque document déclaré a un `doc_type` (`public`/`prive`) et une `business_layer` valides ; le registre couvre exactement les PDF de `data/documents` ; la normalisation applique les étiquettes du registre | `test_n1_undeclared_pdf_is_refused[…]`, `test_n1_every_declared_document_has_valid_labels`, `test_n1_registry_covers_the_whole_corpus`, `test_n1_normalisation_applies_the_registry_labels` |
+| **N2** Métadonnées visibles par le LLM | Après `normalize_metadata`, `file_path` figure dans `excluded_llm_metadata_keys` : seules `source`, `page`, `doc_type` et `business_layer` restent visibles ; aucune métadonnée n'est intégrée aux vecteurs | `test_n2_file_path_is_excluded_from_llm_metadata`, `test_n2_no_metadata_is_embedded_in_vectors` |
+| **N3** Points Qdrant | Chaque point stocké porte la `business_layer` et le `doc_type` de son document ; ces deux champs sont indexés (`keyword`) pour un filtrage par couche ; présence de `file_path` constatée (voir 5.3) | `test_n3_every_stored_point_carries_its_layer_labels`, `test_n3_layer_labels_are_indexed_for_filtering`, `test_n3_known_finding_file_path_is_stored_in_qdrant` |
+
+### 5.2 Limites de ces contrôles
+
+- Ce sont des **prérequis**, pas une preuve de non-transmission : aucun test ne
+  vérifie ce qui est réellement envoyé à un fournisseur LLM, puisque rien ne l'est.
+- N2 vérifie la **déclaration** d'exclusion (`excluded_llm_metadata_keys`) ;
+  l'application effective de cette exclusion dépend de `llama_index`, qui n'est pas
+  installé et n'est pas exécuté par les tests.
+- Les modules factices remplacent `llama_index` et `qdrant_client` : le découpage
+  sémantique, la vectorisation et le filtrage réel par Qdrant ne sont pas testés.
+- Les couches RAG (`business_layer`) ne correspondent pas encore aux départements
+  en base (voir 4.) : le filtrage par couche ne peut pas encore être relié à
+  l'utilisateur connecté.
+
+### 5.3 Constat : `file_path` stocké dans Qdrant (non corrigé)
+
+`store_nodes` enregistre dans le payload Qdrant le texte **et toutes les
+métadonnées**, y compris `file_path` (chemin interne de la machine d'ingestion).
+Ce champ est exclu de la vue LLM par `llama_index`, mais il reste présent dans les
+données récupérables : un futur retriever qui transmettrait les payloads tels quels
+le divulguerait. Ce constat est vérifié par
+`test_n3_known_finding_file_path_is_stored_in_qdrant` et **n'est pas corrigé** ; il
+relève de la minimisation du contexte (US 7, T4).
+
+### 5.4 Scénarios en attente de l'endpoint RAG/chat et de la passerelle
+
+Ils nécessitent la récupération (I-2), la construction du prompt (I-3), l'endpoint
+(I-4), le filtrage par couche (I-5) et, pour les données sensibles, la
+pseudonymisation, la minimisation et la passerelle (US 7, T3 à T5). Ils seront
+testés avec un faux fournisseur LLM qui capture les prompts, sur un corpus
+synthétique contenant un marqueur unique par couche :
+
+| Scénario | Critère de réussite |
+|---|---|
+| Question dont la réponse est dans une autre couche | Aucun extrait de cette couche dans le prompt capturé ni dans la réponse |
+| Filtrage avant **et** après récupération | Un extrait hors couche est écarté avant l'envoi au fournisseur |
+| Plusieurs tours de conversation | Le filtre s'applique à chaque tour |
+| Énumération (« le document X existe-t-il ? ») | La réponse ne confirme pas l'existence d'un document refusé |
+| Données sensibles dans les extraits | Aucune donnée sensible non masquée ni métadonnée interne (`file_path`…) dans le prompt capturé |
+| Injection directe dans la question | Aucun document hors couche, aucun contournement des consignes |
+| Injection indirecte dans un document autorisé | La consigne cachée n'est pas exécutée et l'incident est journalisé |
+| Jeton absent, invalide ou d'un autre rôle | 401/403 et **aucun** appel au fournisseur |
