@@ -68,6 +68,7 @@ def store_nodes(
         for n, v in zip(nodes, vectors)
     ]
     for i in range(0, len(points), batch_size):
-        client.upsert(collection_name=collection, points=points[i : i + batch_size], wait=True)
-        logger.info("%d point(s) écrits dans '%s'", len(points), collection)
-        return len(points)
+        batch = points[i : i + batch_size]
+        client.upsert(collection_name=collection, points=batch, wait=True)
+        logger.info("%d point(s) écrits dans '%s'", len(batch), collection)
+    return len(points)
