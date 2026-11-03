@@ -16,6 +16,7 @@ from app.models.audit_log import AuditAction, AuditLog, AuditResult
 DOCUMENT_ACTIONS = tuple(
     action.value for action in AuditAction if action.value.startswith("DOCUMENT_")
 )
+DENIED_ACTIONS = (*DOCUMENT_ACTIONS, AuditAction.ACCESS_DENIED.value)
 
 
 @dataclass(frozen=True)
@@ -87,11 +88,11 @@ def _failed_logins(db: Session, since: datetime, limits: DetectionThresholds) ->
 
 
 def _denied_accesses(db: Session, since: datetime, limits: DetectionThresholds) -> list[Alert]:
-    """R2: repeated refused document operations by one user."""
+    """R2: repeated refused operations (documents or admin routes) by one user."""
     rows = db.execute(
         select(AuditLog.user_id, func.count(AuditLog.id))
         .where(
-            AuditLog.action.in_(DOCUMENT_ACTIONS),
+            AuditLog.action.in_(DENIED_ACTIONS),
             AuditLog.result == AuditResult.FAILURE.value,
             AuditLog.timestamp >= since,
             AuditLog.user_id.is_not(None),
@@ -107,7 +108,7 @@ def _denied_accesses(db: Session, since: datetime, limits: DetectionThresholds) 
             subject=str(user_id),
             count=count,
             window_minutes=limits.window_minutes,
-            message=f"{count} refused document operations in {limits.window_minutes} minutes",
+            message=f"{count} refused operations in {limits.window_minutes} minutes",
         )
         for user_id, count in rows
     ]

@@ -1,13 +1,15 @@
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import decode_access_token
 from app.db.session import get_db
+from app.models.audit_log import AuditAction, AuditResult, ResourceType
 from app.models.revoked_token import RevokedToken
 from app.models.user import User, UserStatus
+from app.services.audit import log_audit_event
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -58,11 +60,30 @@ def get_current_user(
     return user
 
 
-def require_permission(permission: str, ROLE_PERMISSIONS: dict[str, set[str]]):
-    def checker(current_user: User = Depends(get_current_user)):
+def require_permission(
+    permission: str,
+    ROLE_PERMISSIONS: dict[str, set[str]],
+    resource_type: ResourceType = ResourceType.SESSION,
+):
+    def checker(
+        request: Request,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+    ):
         allowed = ROLE_PERMISSIONS.get(current_user.role, set())
 
         if permission not in allowed:
+            # Persist the refusal before raising so the attempt is traceable.
+            log_audit_event(
+                db,
+                user=current_user,
+                action=AuditAction.ACCESS_DENIED,
+                resource_type=resource_type,
+                resource_id=None,
+                result=AuditResult.FAILURE,
+                ip_address=request.client.host if request.client else None,
+            )
+            db.commit()
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
         return current_user
 

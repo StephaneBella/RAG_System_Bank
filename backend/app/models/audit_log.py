@@ -19,6 +19,7 @@ class AuditAction(str, Enum):
     USER_UPDATE = "USER_UPDATE"
     USER_STATUS_UPDATE = "USER_STATUS_UPDATE"
     EXPORT = "EXPORT"
+    ACCESS_DENIED = "ACCESS_DENIED"
 
 
 # For now we can focus only on login and document access audits

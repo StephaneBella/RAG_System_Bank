@@ -24,9 +24,9 @@ ROLE_PERMISSIONS = {
 }
 
 router = APIRouter(prefix="/users", tags=["User Management"])
-admin_read = require_permission("read", ROLE_PERMISSIONS)
-admin_create = require_permission("create", ROLE_PERMISSIONS)
-admin_update = require_permission("update", ROLE_PERMISSIONS)
+admin_read = require_permission("read", ROLE_PERMISSIONS, ResourceType.USER)
+admin_create = require_permission("create", ROLE_PERMISSIONS, ResourceType.USER)
+admin_update = require_permission("update", ROLE_PERMISSIONS, ResourceType.USER)
 
 
 def _audit(
