@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "rag_system_bank")
 
+# Seules métadonnées recopiées dans "metadata" (lu par LangChain) : liste fermée. Les autres
+# (file_path, chunk_index...) restent uniquement dans le payload à plat.
+NESTED_METADATA_KEYS = ("source", "page", "doc_type", "business_layer")
+
 
 def get_qdrant_client() -> QdrantClient:
     url, api_key = os.getenv("QDRANT_URL"), os.getenv("QDRANT_API_KEY")
@@ -21,9 +25,12 @@ def get_qdrant_client() -> QdrantClient:
     return QdrantClient(url=url, api_key=api_key)
 
 
-def ensure_collection(client: QdrantClient, vector_size: int, collection: str = COLLECTION_NAME) -> None:
+def ensure_collection(
+    client: QdrantClient, vector_size: int, collection: str = COLLECTION_NAME
+) -> None:
     """Crée la collection si besoin, puis garantit les index de payload.
-    Les index sur doc_type / business_layer servent au filtrage RBAC coté Qdrant.
+    Les index sur doc_type / business_layer servent au filtrage RBAC coté Qdrant ; les
+    index metadata.* servent aux filtres du self-query retriever (LangChain).
     """
     if not client.collection_exists(collection):
         client.create_collection(
@@ -37,17 +44,20 @@ def ensure_collection(client: QdrantClient, vector_size: int, collection: str = 
         ("doc_type", PayloadSchemaType.KEYWORD),
         ("business_layer", PayloadSchemaType.KEYWORD),
         ("page", PayloadSchemaType.INTEGER),
+        ("metadata.source", PayloadSchemaType.KEYWORD),
+        ("metadata.doc_type", PayloadSchemaType.KEYWORD),
+        ("metadata.business_layer", PayloadSchemaType.KEYWORD),
+        ("metadata.page", PayloadSchemaType.INTEGER),
     ]:
-        client.create_payload_index(collection, field, schema) #idempotent
-    
+        client.create_payload_index(collection, field, schema)  # idempotent
 
 
 def store_nodes(
-        nodes: list[TextNode],
-        vectors: list[list[float]],
-        client: QdrantClient | None = None,
-        collection: str = COLLECTION_NAME,
-        batch_size: int = 64,
+    nodes: list[TextNode],
+    vectors: list[list[float]],
+    client: QdrantClient | None = None,
+    collection: str = COLLECTION_NAME,
+    batch_size: int = 64,
 ) -> int:
     """Upsert par lots. Retourne le nombre de points écrits."""
     if len(nodes) != len(vectors):
@@ -62,12 +72,17 @@ def store_nodes(
         PointStruct(
             id=n.node_id,
             vector=v,
-            payload={"text": n.get_content(metadata_mode=MetadataMode.NONE), **n.metadata},
-            
+            payload={
+                "text": n.get_content(metadata_mode=MetadataMode.NONE),
+                **n.metadata,  # copie à plat : filtres RBAC Qdrant et LlamaIndex
+                # copie imbriquée lue par LangChain (metadata_payload_key="metadata")
+                "metadata": {k: n.metadata[k] for k in NESTED_METADATA_KEYS if k in n.metadata},
+            },
         )
         for n, v in zip(nodes, vectors)
     ]
     for i in range(0, len(points), batch_size):
-        client.upsert(collection_name=collection, points=points[i : i + batch_size], wait=True)
-        logger.info("%d point(s) écrits dans '%s'", len(points), collection)
-        return len(points)
+        batch = points[i : i + batch_size]
+        client.upsert(collection_name=collection, points=batch, wait=True)
+        logger.info("%d point(s) écrits dans '%s'", len(batch), collection)
+    return len(points)

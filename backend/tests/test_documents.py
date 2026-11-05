@@ -173,17 +173,14 @@ def test_invalid_pagination_and_sort_are_rejected(document_context):
     )
 
 
-def test_employee_sees_public_and_own_department_private_documents(document_context):
+def test_employee_sees_only_own_department_documents(document_context):
     env = document_context
     response = env["client"].get("/documents/get_all", headers=env["headers"]("employee_a"))
     assert response.status_code == 200
     body = response.json()
-    assert body["total"] == 3
+    assert body["total"] == 2
     titles = {item["title"] for item in body["items"]}
-    assert "Alpha Report" in titles
-    assert "Beta Notes" in titles
-    assert "Secret Report" in titles
-    assert "Confidential Report" not in titles
+    assert titles == {"Alpha Report", "Beta Notes"}
 
 
 def test_employee_cannot_view_private_document_from_another_department(document_context):
@@ -201,14 +198,65 @@ def test_employee_cannot_view_private_document_from_another_department(document_
     assert event.result == AuditResult.FAILURE.value
 
 
-def test_search_respects_visibility_and_department_scope_and_is_audited(document_context):
+@pytest.mark.parametrize("suffix", ["", "/content"])
+def test_employee_cannot_access_public_document_from_another_department(document_context, suffix):
+    env = document_context
+    document_id = _document_ids(env)["Secret Report"]
+    response = env["client"].get(
+        f"/documents/{document_id}{suffix}", headers=env["headers"]("employee_a")
+    )
+    assert response.status_code == 403
+    event = _audit_event(
+        env,
+        AuditAction.DOCUMENT_VIEW,
+        user_id=env["ids"]["employee_a"],
+        resource_id=document_id,
+    )
+    assert event is not None
+    assert event.result == AuditResult.FAILURE.value
+
+
+@pytest.mark.parametrize("suffix", ["", "/content"])
+def test_document_denial_is_audited_once_without_generic_refusal(document_context, suffix):
+    env = document_context
+    document_id = _document_ids(env)["Confidential Report"]
+    response = env["client"].get(
+        f"/documents/{document_id}{suffix}", headers=env["headers"]("employee_a")
+    )
+    assert response.status_code == 403
+
+    with env["session_factory"]() as db:
+        events = db.scalars(
+            select(AuditLog).where(AuditLog.user_id == env["ids"]["employee_a"])
+        ).all()
+    assert len(events) == 1
+    assert events[0].action == AuditAction.DOCUMENT_VIEW.value
+    assert events[0].result == AuditResult.FAILURE.value
+    assert events[0].resource_id == document_id
+
+
+@pytest.mark.parametrize("suffix", ["", "/content"])
+def test_employee_can_access_own_department_documents(document_context, suffix):
+    env = document_context
+    document_id = _document_ids(env)["Beta Notes"]
+    response = env["client"].get(
+        f"/documents/{document_id}{suffix}", headers=env["headers"]("employee_a")
+    )
+    assert response.status_code == 200
+
+
+def test_search_respects_department_scope_and_is_audited(document_context):
     env = document_context
     employee = env["headers"]("employee_a")
     admin = env["headers"]("admin")
 
     response = env["client"].get("/documents/search_document?q=secret", headers=employee)
     assert response.status_code == 200
-    assert response.json()["total"] == 1
+    assert response.json()["total"] == 0
+    assert (
+        env["client"].get("/documents/search_document?q=alpha", headers=employee).json()["total"]
+        == 1
+    )
     assert (
         env["client"]
         .get("/documents/search_document?q=confidential", headers=employee)
@@ -460,3 +508,175 @@ def test_content_missing_document_returns_404(document_context):
 def test_content_requires_authentication(document_context):
     env = document_context
     assert env["client"].get("/documents/1/content").status_code == 401
+
+
+# --- SEC-01 T1/T2: departments, refusal reasons and searched documents -----------------
+
+
+def _events_for(env, user_key):
+    with env["session_factory"]() as db:
+        return db.scalars(
+            select(AuditLog).where(AuditLog.user_id == env["ids"][user_key]).order_by(AuditLog.id)
+        ).all()
+
+
+def _move_user(env, user_key, department_key):
+    with env["session_factory"]() as db:
+        db.get(User, env["ids"][user_key]).department_id = env["ids"][department_key]
+        db.commit()
+
+
+def test_employee_document_mutations_are_refused_with_role_reason(document_context):
+    env = document_context
+    employee = env["headers"]("employee_a")
+    document_id = _document_ids(env)["Alpha Report"]
+    form = {"title": "x", "department_id": env["ids"]["front_office"], "visibility": "public"}
+    file = {"file": ("x.pdf", b"%PDF-1.4 x", "application/pdf")}
+
+    env["client"].post("/documents/add", data=form, files=file, headers=employee)
+    env["client"].put(f"/documents/update/{document_id}", data=form, files=file, headers=employee)
+    env["client"].delete(f"/documents/delete/{document_id}", headers=employee)
+
+    events = _events_for(env, "employee_a")
+    assert [e.action for e in events] == ["DOCUMENT_CREATE", "DOCUMENT_UPDATE", "DOCUMENT_DELETE"]
+    for event in events:
+        assert event.result == AuditResult.FAILURE.value
+        assert event.details == {"reason": "ROLE_FORBIDDEN"}
+        assert event.user_department_id == env["ids"]["front_office"]
+        assert event.resource_department_id is None
+
+
+@pytest.mark.parametrize("suffix", ["", "/content"])
+def test_cross_department_refusal_records_both_departments(document_context, suffix):
+    env = document_context
+    # employee_b belongs to Compliance; Beta Notes is a Front Office document.
+    document_id = _document_ids(env)["Beta Notes"]
+    response = env["client"].get(
+        f"/documents/{document_id}{suffix}", headers=env["headers"]("employee_b")
+    )
+    assert response.status_code == 403
+
+    [event] = _events_for(env, "employee_b")
+    assert event.details == {"reason": "DEPARTMENT_FORBIDDEN"}
+    assert event.user_department_id == env["ids"]["compliance"]
+    assert event.resource_department_id == env["ids"]["front_office"]
+
+
+def test_unresolved_document_department_is_never_guessed(document_context):
+    env = document_context
+    # The "Compliance/LBC-FT" department gives the token "compliance_lbc-ft", while this
+    # file carries "compliance_lbc_ft": no exact match, so no department is recorded.
+    document_id = _document_ids(env)["Confidential Report"]
+    response = env["client"].get(f"/documents/{document_id}", headers=env["headers"]("employee_a"))
+    assert response.status_code == 403
+
+    [event] = _events_for(env, "employee_a")
+    assert event.details == {"reason": "DEPARTMENT_FORBIDDEN"}
+    assert event.user_department_id == env["ids"]["front_office"]
+    assert event.resource_department_id is None
+
+
+@pytest.mark.parametrize("suffix", ["", "/content"])
+def test_user_and_resource_departments_stay_distinct(document_context, suffix):
+    env = document_context
+    _move_user(env, "admin", "compliance")
+    document_id = _document_ids(env)["Alpha Report"]
+    response = env["client"].get(
+        f"/documents/{document_id}{suffix}", headers=env["headers"]("admin")
+    )
+    assert response.status_code == 200
+
+    event = _audit_event(env, AuditAction.DOCUMENT_VIEW, resource_id=document_id)
+    assert event.result == AuditResult.SUCCESS.value
+    assert event.details is None
+    assert event.user_department_id == env["ids"]["compliance"]
+    assert event.resource_department_id == env["ids"]["front_office"]
+
+
+def test_missing_document_has_no_resource_department(document_context):
+    env = document_context
+    assert env["client"].get("/documents/9999", headers=env["headers"]("admin")).status_code == 404
+    event = _audit_event(env, AuditAction.DOCUMENT_VIEW, resource_id=9999)
+    assert event.result == AuditResult.FAILURE.value
+    assert event.resource_department_id is None
+    assert event.details == {"reason": "DOCUMENT_NOT_FOUND"}
+
+
+def test_create_update_delete_record_the_document_department(document_context):
+    env = document_context
+    admin = env["headers"]("admin")
+    created = (
+        env["client"]
+        .post(
+            "/documents/add",
+            data={
+                "title": "kyc",
+                "department_id": env["ids"]["front_office"],
+                "visibility": "private",
+            },
+            files={"file": ("kyc.pdf", b"%PDF-1.4 kyc", "application/pdf")},
+            headers=admin,
+        )
+        .json()
+    )
+    document_id = created["id"]
+    create_event = _audit_event(env, AuditAction.DOCUMENT_CREATE, resource_id=document_id)
+    assert create_event.resource_department_id == env["ids"]["front_office"]
+
+    env["client"].put(
+        f"/documents/update/{document_id}",
+        data={"title": "kyc", "department_id": env["ids"]["compliance"], "visibility": "private"},
+        files={"file": ("kyc.pdf", b"%PDF-1.4 kyc v2", "application/pdf")},
+        headers=admin,
+    )
+    update_event = _audit_event(env, AuditAction.DOCUMENT_UPDATE, resource_id=document_id)
+    assert update_event.result == AuditResult.SUCCESS.value
+    assert update_event.resource_department_id == env["ids"]["compliance"]
+
+    env["client"].delete(f"/documents/delete/{document_id}", headers=admin)
+    delete_event = _audit_event(env, AuditAction.DOCUMENT_DELETE, resource_id=document_id)
+    assert delete_event.result == AuditResult.SUCCESS.value
+    assert delete_event.resource_department_id == env["ids"]["compliance"]
+
+
+def test_search_records_only_the_returned_page_ids(document_context):
+    env = document_context
+    admin = env["headers"]("admin")
+    response = env["client"].get(
+        "/documents/search_document?q=report&page=1&page_size=2&sort_by=id&order=asc",
+        headers=admin,
+    )
+    body = response.json()
+    assert body["total"] == 3
+    returned_ids = [item["id"] for item in body["items"]]
+    assert len(returned_ids) == 2
+
+    event = _audit_event(env, AuditAction.DOCUMENT_SEARCH)
+    assert event.details == {"document_ids": returned_ids}
+    assert event.resource_department_id is None
+    assert event.resource_id is None
+
+
+def test_search_text_is_never_stored(document_context):
+    env = document_context
+    query = "zq-unique-search-term"
+    env["client"].get(f"/documents/search_document?q={query}", headers=env["headers"]("employee_a"))
+    [event] = _events_for(env, "employee_a")
+    assert event.details == {"document_ids": []}
+    stored = " ".join(str(getattr(event, column.name)) for column in AuditLog.__table__.columns)
+    assert query not in stored
+
+
+# --- SEC-01 T5: not-found reasons --------------------------------------------------------
+
+
+@pytest.mark.parametrize("suffix", ["", "/content"])
+def test_unknown_document_id_records_document_not_found(document_context, suffix):
+    env = document_context
+    response = env["client"].get(f"/documents/9999{suffix}", headers=env["headers"]("employee_a"))
+    assert response.status_code == 404
+    [event] = _events_for(env, "employee_a")
+    assert event.action == AuditAction.DOCUMENT_VIEW.value
+    assert event.result == AuditResult.FAILURE.value
+    assert event.resource_id == 9999
+    assert event.details == {"reason": "DOCUMENT_NOT_FOUND"}

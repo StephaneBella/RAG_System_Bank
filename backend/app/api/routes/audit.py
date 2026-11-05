@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -11,7 +12,9 @@ from app.models.audit_log import AuditAction, AuditResult, ResourceType
 from app.models.user import User, UserRole
 from app.schemas.audit import AuditLogResponse
 from app.schemas.pagination import Page
+from app.schemas.security_alert import AlertRule, AlertSeverity, SecurityAlert
 from app.services.audit import export_audit_logs, list_audit_logs, log_audit_event
+from app.services.suspicious_activity import detect_alerts
 
 ROLE_PERMISSIONS = {
     UserRole.EMPLOYEE: set(),
@@ -19,7 +22,7 @@ ROLE_PERMISSIONS = {
 }
 
 router = APIRouter(prefix="/audit", tags=["Audit & Traceability"])
-admin_read = require_permission("read", ROLE_PERMISSIONS)
+admin_read = require_permission("read", ROLE_PERMISSIONS, resource_type=ResourceType.AUDIT_LOG)
 
 CSV_COLUMNS = [
     "timestamp",
@@ -29,6 +32,10 @@ CSV_COLUMNS = [
     "resource_id",
     "result",
     "ip_address",
+    "user_department",
+    "resource_department",
+    "duration_ms",
+    "details",
 ]
 
 
@@ -119,6 +126,10 @@ def export_audit_logs_csv(
                 _csv_cell(log.resource_id),
                 _csv_cell(log.result),
                 _csv_cell(log.ip_address),
+                _csv_cell(log.user_department_name),
+                _csv_cell(log.resource_department_name),
+                _csv_cell(log.duration_ms),
+                _csv_cell(json.dumps(log.details, separators=(",", ":")) if log.details else None),
             ]
         )
 
@@ -138,3 +149,19 @@ def export_audit_logs_csv(
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="audit-log.csv"'},
     )
+
+
+@router.get("/alerts", response_model=list[SecurityAlert])
+def get_security_alerts(
+    lookback_hours: int | None = Query(default=None, ge=1, le=168),
+    rule: AlertRule | None = Query(default=None),
+    severity: AlertSeverity | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(admin_read),
+) -> list[SecurityAlert]:
+    alerts = detect_alerts(db, lookback_hours=lookback_hours)
+    return [
+        alert
+        for alert in alerts
+        if (rule is None or alert.rule == rule) and (severity is None or alert.severity == severity)
+    ]

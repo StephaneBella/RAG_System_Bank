@@ -25,6 +25,29 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.16.10",
 ]
+# RAG agent (LangChain, LangGraph, LlamaIndex, Qdrant); not installed by default
+rag = [
+    "langchain==1.4.7",
+    "langchain-core==1.7.2",
+    "langchain-classic==1.0.8",
+    "langchain-community==0.4.2",
+    "langchain-qdrant==1.1.0",
+    "langchain-groq==1.1.3",
+    "langgraph==1.2.19",
+    "lark==1.3.1",
+    "llama-index-core==0.14.25",
+    "llama-index-vector-stores-qdrant==0.10.4",
+    "llama-index-retrievers-bm25==0.8.0",
+    "llama-index-embeddings-huggingface==0.8.0",
+    "qdrant-client==1.20.0",
+    "numpy==2.5.4",
+    "PyStemmer==2.2.0.3",
+    "python-dotenv==1.2.4",
+]
+
+[tool.uv.dependency-groups]
+# numpy 2.5.4 requires Python 3.12; the rest of the project still supports 3.11
+rag = { requires-python = ">=3.12" }
 
 # This is a tool that will be used for automatically formatting the code
 # to make sur it follows the correct python 3.11 synthax

@@ -75,7 +75,12 @@
     "USER_CREATE": "Création utilisateur",
     "USER_UPDATE": "Modification utilisateur",
     "USER_STATUS_UPDATE": "Changement de statut",
-    "EXPORT": "Export"
+    "EXPORT": "Export",
+    "AUTHENTICATION_FAILED": "Échec d'authentification",
+    "ACCESS_DENIED": "Accès refusé",
+    "SESSION_EXPIRED": "Session expirée",
+    "TOKEN_MISSING": "Jeton absent",
+    "LLM_CALL": "Appel au LLM"
   },
   "auditResults": {
     "SUCCESS": "Succès",
@@ -84,7 +89,10 @@
   "resourceTypes": {
     "DOCUMENT": "Document",
     "USER": "Utilisateur",
-    "SESSION": "Session"
+    "SESSION": "Session",
+    "AUDIT_LOG": "Journal d'audit",
+    "DEPARTMENT": "Département",
+    "LLM_GATEWAY": "Passerelle LLM"
   },
   "auth": {
     "brand": "Coffre-fort Documentaire",
@@ -252,7 +260,10 @@
         "context": "Adresse IP & Contexte",
         "status": "Statut"
       },
-      "empty": "Aucun événement pour ces critères."
+      "empty": "Aucun événement pour ces critères.",
+      "anonymous": "Anonyme",
+      "dateFrom": "Du",
+      "dateTo": "Au"
     }
   },
   "errors": {

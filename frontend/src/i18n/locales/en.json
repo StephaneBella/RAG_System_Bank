@@ -75,7 +75,12 @@
     "USER_CREATE": "User creation",
     "USER_UPDATE": "User update",
     "USER_STATUS_UPDATE": "User status change",
-    "EXPORT": "Export"
+    "EXPORT": "Export",
+    "AUTHENTICATION_FAILED": "Authentication failure",
+    "ACCESS_DENIED": "Access denied",
+    "SESSION_EXPIRED": "Session expired",
+    "TOKEN_MISSING": "Missing token",
+    "LLM_CALL": "LLM call"
   },
   "auditResults": {
     "SUCCESS": "Success",
@@ -84,7 +89,10 @@
   "resourceTypes": {
     "DOCUMENT": "Document",
     "USER": "User",
-    "SESSION": "Session"
+    "SESSION": "Session",
+    "AUDIT_LOG": "Audit log",
+    "DEPARTMENT": "Department",
+    "LLM_GATEWAY": "LLM gateway"
   },
   "auth": {
     "brand": "Documentary Vault",
@@ -252,7 +260,10 @@
         "context": "IP address & Context",
         "status": "Status"
       },
-      "empty": "No event for these criteria."
+      "empty": "No event for these criteria.",
+      "anonymous": "Anonymous",
+      "dateFrom": "From",
+      "dateTo": "To"
     }
   },
   "errors": {

@@ -13,5 +13,11 @@ class AuditLogResponse(BaseModel):
     result: str
     ip_address: str | None
     timestamp: datetime
+    user_department_id: int | None = None
+    user_department_name: str | None = None
+    resource_department_id: int | None = None
+    resource_department_name: str | None = None
+    duration_ms: int | None = None
+    details: dict[str, object] | None = None
 
     model_config = ConfigDict(from_attributes=True)
