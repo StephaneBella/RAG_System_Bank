@@ -1,4 +1,5 @@
 import builtins
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -13,6 +14,7 @@ from app.models.user import User
 from app.schemas.audit import AuditLogResponse
 from app.schemas.pagination import Page
 from app.services.llm_gateway import GatewayReport, Outcome, Stage
+from app.services.llm_request import CallKind, CallOutcome, LLMRequestContext, ProviderCallReport
 from app.services.rag_context import ContextStats, ExclusionReason
 
 # US 07 T5: an answered call, or one stopped on purpose before the provider, is a success.
@@ -22,6 +24,16 @@ LLM_CALL_RESULTS = {
     Outcome.PROMPT_TOO_LONG: AuditResult.SUCCESS,
     Outcome.FAILED: AuditResult.FAILURE,
 }
+
+# RAG agent: one event per provider call. A prompt refused for its size never reached
+# the provider; reaching the call limit of a request is reported as a failure.
+PROVIDER_CALL_RESULTS = {
+    CallOutcome.COMPLETED: AuditResult.SUCCESS,
+    CallOutcome.PROMPT_TOO_LONG: AuditResult.SUCCESS,
+    CallOutcome.CALL_LIMIT_EXCEEDED: AuditResult.FAILURE,
+    CallOutcome.FAILED: AuditResult.FAILURE,
+}
+_REQUEST_ID = re.compile(r"[0-9a-f]{32}")
 
 
 def _count(value: object, name: str, *, optional: bool = False) -> int | None:
@@ -82,6 +94,69 @@ def _llm_call_details(report: GatewayReport) -> dict[str, object]:
     }
 
 
+def _provider_count(value: object, name: str, *, optional: bool = False) -> int | None:
+    if value is None and optional:
+        return None
+    if type(value) is not int or value < 0:
+        raise ValueError(f"provider call report {name} must be a non-negative int")
+    return value
+
+
+def _provider_call_details(report: ProviderCallReport) -> dict[str, object]:
+    """Validate one provider call report and build its closed list of logged fields.
+
+    Only enum values, non-negative integers, null and the request id drawn by the server
+    are logged: never a prompt, an answer, a tool argument, a token, a user text or the
+    session id given by the client. The caller identity is checked by the callers.
+
+    ``prompt_chars`` is validated but always logged as null (decision H8): the prompt of
+    an agent step or of a query rewrite is a constant text plus the question, so its
+    size would give away the length of the question.
+    """
+    if not isinstance(report, ProviderCallReport):
+        raise TypeError(f"provider_call must be a ProviderCallReport, not {type(report).__name__}")
+    if type(report.request_id) is not str or not _REQUEST_ID.fullmatch(report.request_id):
+        raise ValueError("provider call report request_id is not a server request id")
+    if not isinstance(report.kind, CallKind):
+        raise TypeError("provider call report kind is not a call kind")
+    if not isinstance(report.outcome, CallOutcome):
+        raise TypeError("provider call report outcome is not a call outcome")
+    failed = report.outcome is CallOutcome.FAILED
+    if failed != (report.error_type is not None):
+        raise ValueError("provider call report outcome and error type are inconsistent")
+    prompt_chars = _provider_count(report.prompt_chars, "prompt_chars", optional=True)
+    details = {
+        "request_id": report.request_id,
+        "call_index": _provider_count(report.call_index, "call_index"),
+        "call_kind": report.kind.value,
+        "outcome": report.outcome.value,
+        "error_type": _safe_error_type(report.error_type) if failed else None,
+        "prompt_chars": None,  # H8: never logged, see the docstring
+        "answer_chars": _provider_count(report.answer_chars, "answer_chars", optional=True),
+        "tokens_sent": _provider_count(report.tokens_sent, "tokens_sent"),
+        "tokens_restored": _provider_count(report.tokens_restored, "tokens_restored"),
+        "tokens_withheld": _provider_count(report.tokens_withheld, "tokens_withheld"),
+        "duration_ms": _provider_count(report.duration_ms, "duration_ms"),
+    }
+    tokens_in_answer = details["tokens_restored"] > 0 or details["tokens_withheld"] > 0
+    if tokens_in_answer and details["answer_chars"] is None:
+        raise ValueError("provider call report counts tokens in an answer it does not have")
+    if details["tokens_restored"] > 0 and details["tokens_sent"] == 0:
+        raise ValueError("provider call report restores tokens it never sent")
+    answered = details["answer_chars"] is not None or tokens_in_answer
+    if report.outcome is CallOutcome.CALL_LIMIT_EXCEEDED and (
+        answered or prompt_chars is not None or details["tokens_sent"] > 0
+    ):
+        raise ValueError("a provider call refused by the call limit cannot have sent anything")
+    if report.outcome is CallOutcome.PROMPT_TOO_LONG and (
+        answered or prompt_chars is None or details["tokens_sent"] > 0
+    ):
+        raise ValueError("a provider call refused for its size cannot have an answer")
+    if report.outcome is CallOutcome.COMPLETED and prompt_chars is None:
+        raise ValueError("a completed provider call must have sent a prompt")
+    return details
+
+
 def log_audit_event(
     db: Session,
     *,
@@ -108,7 +183,35 @@ def log_audit_event(
         details["document_ids"] = [int(document_id) for document_id in document_ids]
     if llm_call is not None:
         details["llm_call"] = _llm_call_details(llm_call)
+    _add_event(
+        db,
+        user=user,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        result=result,
+        ip_address=ip_address,
+        resource_department_id=resource_department_id,
+        details=details,
+    )
 
+
+def _add_event(
+    db: Session,
+    *,
+    user: User | None,
+    action: AuditAction,
+    resource_type: ResourceType,
+    resource_id: int | None,
+    result: AuditResult,
+    ip_address: str | None,
+    resource_department_id: int | None,
+    details: dict[str, object],
+) -> None:
+    """Add one event and flush, without committing. Private: ``details`` must already be
+    built by a public function from validated, typed values only."""
+    if "llm_call" in details and "provider_call" in details:
+        raise ValueError("an event is either a gateway call or a provider call")
     event = AuditLog(
         user_id=user.id if user is not None else None,
         action=action.value,
@@ -156,6 +259,93 @@ def log_gateway_call(
         ip_address=ip_address,
         llm_call=report,
     )
+
+
+def _checked_provider_call(user: object, report: object, ip_address: object) -> dict[str, object]:
+    """Identity, client address and content checks of one provider call; nothing written.
+
+    The report must belong to the authenticated user: its ``caller_id`` has to be
+    exactly the user's id (an int, never a bool).
+    """
+    if not isinstance(user, User):
+        raise TypeError(f"user must be a User, not {type(user).__name__}")
+    if not isinstance(report, ProviderCallReport):
+        raise TypeError(f"report must be a ProviderCallReport, not {type(report).__name__}")
+    if type(report.caller_id) is not int or type(user.id) is not int:
+        raise ValueError("provider call report caller_id does not match the user")
+    if report.caller_id != user.id:
+        raise ValueError("provider call report caller_id does not match the user")
+    if ip_address is not None and type(ip_address) is not str:
+        raise TypeError(f"ip_address must be a str, not {type(ip_address).__name__}")
+    return _provider_call_details(report)
+
+
+def _add_provider_call(
+    db: Session,
+    *,
+    user: User,
+    report: ProviderCallReport,
+    ip_address: str | None,
+    details: dict[str, object],
+) -> None:
+    _add_event(
+        db,
+        user=user,
+        action=AuditAction.LLM_CALL,
+        resource_type=ResourceType.LLM_GATEWAY,
+        resource_id=None,
+        result=PROVIDER_CALL_RESULTS[report.outcome],
+        ip_address=ip_address,
+        resource_department_id=None,
+        details={"provider_call": details},
+    )
+
+
+def log_provider_call(
+    db: Session, *, user: User, report: ProviderCallReport, ip_address: str | None
+) -> None:
+    """Persist one provider call of a RAG request as one LLM_CALL event.
+
+    Every check (identity, request id, enums, counters, consistency) runs before the
+    write. The caller commits.
+    """
+    details = _checked_provider_call(user, report, ip_address)
+    _add_provider_call(db, user=user, report=report, ip_address=ip_address, details=details)
+
+
+def log_request_calls(
+    db: Session, *, user: User, context: LLMRequestContext, ip_address: str | None
+) -> int:
+    """Persist every provider call of one request, or none of them.
+
+    The context must be closed: while it is open, a call still running would leave its
+    report out. All the reports of ``context`` are checked first: same user, the request
+    id of the context, unique call indexes. If one of them is refused, no event is added.
+    The caller (the future RAG route) calls it once the request is over, then commits.
+    Returns the number of events added.
+    """
+    if not isinstance(context, LLMRequestContext):
+        raise TypeError(f"context must be an LLMRequestContext, not {type(context).__name__}")
+    if not isinstance(user, User):
+        raise TypeError(f"user must be a User, not {type(user).__name__}")
+    if type(context.caller_id) is not int or context.caller_id != user.id:
+        raise ValueError("request context caller_id does not match the user")
+    if context.closed is not True:
+        raise ValueError("the request context must be closed before its calls are logged")
+    reports = context.reports()
+    checked = []
+    indexes: set[int] = set()
+    for report in reports:
+        details = _checked_provider_call(user, report, ip_address)
+        if report.request_id != context.request_id:
+            raise ValueError("provider call report does not belong to this request")
+        if report.call_index in indexes:
+            raise ValueError("provider call reports must have unique call indexes")
+        indexes.add(report.call_index)
+        checked.append((report, details))
+    for report, details in checked:
+        _add_provider_call(db, user=user, report=report, ip_address=ip_address, details=details)
+    return len(checked)
 
 
 PERIODS = {"today", "last7", "last30", "month"}

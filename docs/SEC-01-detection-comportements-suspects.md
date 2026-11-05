@@ -125,6 +125,16 @@ alerte `ACTIVITY_SPIKE` ; à l'inverse, un usage régulier du chat élève la mo
 de référence de l'utilisateur. Les autres règles filtrent des actions précises et
 ne comptent jamais `LLM_CALL` (vérifié par `backend/tests/test_gateway_audit.py`).
 
+**Appels fournisseur de l'agent RAG.** R5 n'est pas modifiée : elle compte chaque
+événement `LLM_CALL`, donc **chaque appel fournisseur**, et non chaque question. Une
+question qui produit `k` appels pèse `k` événements : avec 4 appels par question,
+le plancher de 60 événements en 10 minutes est atteint dès 15 questions. Une alerte
+`ACTIVITY_SPIKE` portant sur des événements `provider_call` doit donc être lue en
+regroupant ses événements par `request_id` avant de conclure à une rafale de
+requêtes. L'adaptation éventuelle de R5 (compter les requêtes plutôt que les appels,
+ou une règle dédiée) reste une décision ouverte ; aucun seuil n'est fixé ici
+(vérifié par `backend/tests/test_provider_call_audit.py::test_r5_still_counts_each_provider_call_event`).
+
 ## Index
 
 Migration `3a6cb1fbc969` : index `ix_audit_logs_timestamp` sur
@@ -140,7 +150,7 @@ inchangées). Champs ajoutés à `audit_logs`, exposés par `GET /audit` et l'ex
 | `user_department_id` | Département de l'**utilisateur** au moment de l'événement (instantané, conservé s'il change ensuite de département) ; `NULL` pour un événement anonyme. Pour un `LOGIN` en échec, il s'agit du département du **compte visé** (comme `user_id`), pas nécessairement de celui de l'auteur réel de la tentative ; `NULL` si l'email est inconnu. |
 | `resource_department_id` | Département du **document concerné**, uniquement quand la route a identifié le document et que le jeton de département de son nom de fichier correspond exactement à un département en base (règle existante de la bibliothèque) ; sinon `NULL`. Jamais déduit de l'utilisateur. |
 | `duration_ms` | Temps écoulé entre la réception de la requête et l'écriture de l'événement (middleware `RequestTimingMiddleware`) ; `NULL` hors requête HTTP. |
-| `details` | JSON structuré uniquement : `reason` (motif de refus) et/ou `document_ids` (identifiants des documents de la page renvoyée par une recherche), ou `llm_call` pour un appel à la passerelle LLM (voir ci-dessous). Aucun texte libre, aucun texte de recherche, aucun contenu. |
+| `details` | JSON structuré uniquement : `reason` (motif de refus) et/ou `document_ids` (identifiants des documents de la page renvoyée par une recherche), ou `llm_call` pour un appel à la passerelle LLM, ou `provider_call` pour un appel fournisseur de l'agent RAG (voir ci-dessous ; jamais les deux à la fois). Aucun texte libre, aucun texte de recherche, aucun contenu. |
 
 `resource_department_id` est renseigné pour `DOCUMENT_VIEW` sur un document identifié
 (succès, refus `DEPARTMENT_FORBIDDEN`, fichier absent) et pour les `DOCUMENT_CREATE`,
@@ -216,6 +226,91 @@ CSV, et affichée sous les libellés « Appel au LLM » et « Passerelle LLM » 
 l'interface d'audit. Tests : `backend/tests/test_gateway_audit.py` et les scénarios
 `LLM_CALL` de `backend/tests/test_audit_traceability.py`.
 
+### Appels fournisseur de l'agent RAG (`LLM_CALL` avec `provider_call`)
+
+L'agent RAG appelle le fournisseur **plusieurs fois pour une seule question** :
+étapes de l'agent, reformulation de la requête, filtres déduits (self-query),
+fusion. Tous ces appels partagent le contexte de la requête
+(`backend/app/services/llm_request.py`), qui produit un compte rendu sans texte par
+appel. `log_request_calls` (`backend/app/services/audit.py`) les journalise **à la
+fin de la requête**, un événement `LLM_CALL` par appel ; `log_provider_call`
+journalise un seul appel. Aucune route ne les appelle encore (intégration de
+l'agent à venir).
+
+| Champ | Valeur |
+|---|---|
+| `action`, `resource_type`, `resource_id` | `LLM_CALL`, `LLM_GATEWAY`, `NULL` |
+| `user_id`, `user_department_id` | L'utilisateur authentifié. Le `caller_id` du compte rendu (et celui du contexte) doit être **exactement** son identifiant, un entier (un booléen est refusé), sinon rien n'est écrit. |
+| `resource_department_id` | `NULL` |
+| `duration_ms` | Comme pour les autres événements ; la durée propre à l'appel est dans `details.provider_call.duration_ms` |
+| `result` | Selon l'issue de l'appel, voir ci-dessous |
+
+| Issue (`outcome`) | `result` |
+|---|---|
+| `COMPLETED` : réponse du fournisseur, restaurée | `SUCCESS` |
+| `PROMPT_TOO_LONG` : prompt au-delà de la limite, fournisseur non appelé | `SUCCESS` |
+| `CALL_LIMIT_EXCEEDED` : nombre maximal d'appels de la requête atteint, fournisseur non appelé | `FAILURE` |
+| `FAILED` : échec de l'appel | `FAILURE` |
+
+`details` ne contient que la clé `provider_call`, une **liste fermée de 11 clés**,
+distincte de `llm_call` (qui reste inchangée) :
+
+| Clé | Contenu |
+|---|---|
+| `request_id` | Identifiant de la requête, **tiré au hasard côté serveur** (32 caractères hexadécimaux minuscules) ; jamais dérivé de la question, de l'utilisateur, de l'heure ni de l'identifiant de session fourni par le client |
+| `call_index` | Rang de l'appel dans la requête, à partir de 0 |
+| `call_kind` | `AGENT_STEP`, `QUERY_REWRITE`, `SELF_QUERY` ou `QUERY_FUSION` |
+| `outcome` | `COMPLETED`, `PROMPT_TOO_LONG`, `CALL_LIMIT_EXCEEDED` ou `FAILED` |
+| `error_type` | Seulement pour `FAILED` : nom d'une exception intégrée à Python ou `ComponentError` ; sinon `null` |
+| `prompt_chars` | **Toujours `null`** (décision H8, voir ci-dessous) ; la clé est conservée pour garder la liste fermée de 11 clés |
+| `answer_chars` | Taille de la réponse (contenu et arguments d'outils) ; `null` si aucune réponse n'a été restaurée |
+| `tokens_sent`, `tokens_restored`, `tokens_withheld` | Nombre de jetons de pseudonymisation distincts envoyés, de jetons restaurés et de jetons laissés tels quels dans la réponse |
+| `duration_ms` | Durée de l'appel |
+
+Un compte rendu incohérent est refusé **avant toute écriture** : `request_id` mal
+formé, compteur négatif ou non entier, type d'appel ou issue inattendus, type
+d'erreur hors `FAILED` ou absent en `FAILED`, appel refusé pour limite qui déclare un
+envoi ou une réponse, prompt trop long qui déclare une réponse ou des jetons envoyés,
+appel terminé sans prompt, jetons restaurés ou laissés tels quels sans réponse
+(`answer_chars` nul), jetons restaurés alors qu'aucun jeton n'a été envoyé. La taille
+du prompt présente dans le compte rendu reste **validée** (entier non négatif,
+cohérence avec l'issue), même si elle n'est pas journalisée.
+
+`log_request_calls` exige un contexte **fermé** : tant qu'il est ouvert, un appel en
+cours manquerait au journal ; un contexte ouvert est refusé avant toute écriture. Les
+comptes rendus restent lisibles après la fermeture. La fonction valide ensuite
+**tous** les comptes rendus de la requête avant d'en écrire un : même utilisateur,
+`request_id` du contexte, `call_index` uniques ; au moindre refus, **aucun**
+événement n'est ajouté. L'écriture
+passe par `db.add()` et `db.flush()`, sans commit : l'appelant valide la transaction,
+ou l'annule si l'écriture échoue. `log_audit_event` n'accepte pas de
+`provider_call` : seules les deux fonctions dédiées, qui vérifient l'identité,
+écrivent ces événements.
+
+**Données interdites, jamais journalisées** : la question, **sa longueur**, le prompt,
+**sa longueur**, la réponse, les arguments d'outils, les valeurs sensibles, les jetons
+de pseudonymisation, les noms de sources et l'**identifiant de session fourni par le
+client**.
+
+**Décision H8 pour les appels fournisseur.** Le prompt d'une étape de l'agent ou
+d'une reformulation est un texte constant (prompt système, modèle de requête) suivi
+de la question : sa taille donnerait la longueur de la question, exactement ou à
+quelques caractères près. `details.provider_call.prompt_chars` est donc enregistré à
+`null` **quel que soit le résultat** de l'appel, pour ne révéler ni la longueur
+exacte ni une approximation de la longueur de la question. Le compte rendu de
+`llm_request.py` n'est pas modifié : la taille y reste disponible pour les limites
+(`max_prompt_chars`) et pour la validation, mais ne sort pas du processus. La
+passerelle (`details.llm_call.prompt_chars`, où le prompt mêle question et extraits)
+n'est pas concernée par ce changement.
+
+**Corrélation.** Les événements d'une même question ont le même `request_id` et des
+`call_index` de 0 à n − 1 ; `call_index = 0` marque le premier appel de chaque
+requête. **Plusieurs événements `LLM_CALL` ne signifient donc pas plusieurs requêtes
+de l'utilisateur** : une seule question produit couramment plusieurs appels
+fournisseur. Pour compter les requêtes, il faut compter les `request_id` distincts
+(ou les événements de `call_index` 0), et non les événements. Tests :
+`backend/tests/test_provider_call_audit.py`.
+
 Les couches de l'ingestion RAG (`business_layer`) ne sont **pas** reliées aux
 départements : leurs identifiants diffèrent (`credit_risques` / `Credit & Risques`,
 `conformite_lbc_ft` / `Direction Conformite`) et aucune correspondance n'est définie.
@@ -243,7 +338,12 @@ départements : leurs identifiants diffèrent (`credit_risques` / `Credit & Risq
   la création de l'endpoint RAG (tâche I-4) ; d'ici là, aucun événement
   `LLM_CALL` n'est produit en dehors des tests.
 - R5 compte les appels `LLM_CALL` : un usage légitime et intensif du chat peut
-  produire une alerte `ACTIVITY_SPIKE`.
+  produire une alerte `ACTIVITY_SPIKE`. Avec l'agent RAG, chaque question produit
+  plusieurs appels fournisseur, donc plusieurs événements : l'effet est multiplié
+  (voir « R5 — formule de référence »). Décision ouverte.
+- **Journalisation des appels fournisseur non branchée** : `log_request_calls` et
+  `log_provider_call` existent et sont testées, mais aucune route ne les appelle
+  encore ; aucun événement `provider_call` n'est produit en dehors des tests.
 - R1a et R1b peuvent produire deux alertes (compte et IP) pour une même rafale ;
   R1b peut produire deux alertes pour une même IP (jetons rejetés, jetons absents).
 - Un changement de `JWT_SECRET_KEY` invalide tous les jetons en cours et peut
