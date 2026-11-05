@@ -992,3 +992,173 @@ def test_invalid_environment_value_is_rejected(monkeypatch):
     monkeypatch.setenv("ALERT_SPIKE_MIN_ACTIVE_WINDOWS", "0")
     with pytest.raises(ValidationError):
         _settings()
+
+
+# --- RAG configuration (Groq only, internal Qdrant, embeddings) --------------------
+
+QDRANT_SECRET = "QDRANT-SECRET-VALUE"
+INGEST_SECRET = "QDRANT-INGEST-SECRET"
+GROQ_SECRET = "gsk_GROQ-SECRET-VALUE"
+GROQ_RAG = {
+    "rag_enabled": True,
+    "llm_model": "openai/gpt-oss-120b",
+    "groq_api_key": GROQ_SECRET,
+    "allow_external_llm": True,
+    "qdrant_url": "http://127.0.0.1:6333",
+    "qdrant_api_key": QDRANT_SECRET,
+}
+ALL_SECRETS = (QDRANT_SECRET, INGEST_SECRET, GROQ_SECRET, "test-secret-key-with-enough-length")
+
+
+def _rag_error(**overrides) -> str:
+    """The full text of the validation error, as it would reach a log."""
+    with pytest.raises(ValidationError) as caught:
+        _settings(**overrides)
+    text = str(caught.value)
+    for secret in ALL_SECRETS:
+        assert secret not in text  # hide_input_in_errors: values are never printed
+    return text
+
+
+def test_rag_disabled_needs_no_rag_configuration():
+    config = _settings()
+    assert config.rag_enabled is False
+    assert config.groq_api_key is None and config.llm_model is None
+    assert config.allow_external_llm is False  # no external provider without consent
+    assert config.qdrant_https is False and config.qdrant_timeout == 10
+    assert config.qdrant_internal_hosts == ["127.0.0.1", "localhost", "qdrant"]
+    assert config.qdrant_ingest_api_key is None
+    assert config.embedding_model == "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    assert (config.embedding_cache_dir, config.embedding_device) == (None, None)
+    assert config.embedding_offline is True
+
+
+def test_rag_disabled_ignores_an_incomplete_rag_configuration():
+    config = _settings(groq_api_key=GROQ_SECRET, qdrant_url="https://cloud.example")
+    assert config.rag_enabled is False
+
+
+def test_rag_enabled_with_a_groq_key_and_the_external_consent_is_valid():
+    config = _settings(**GROQ_RAG, qdrant_ingest_api_key=INGEST_SECRET)
+    assert config.rag_enabled is True and config.allow_external_llm is True
+    assert config.groq_api_key.get_secret_value() == GROQ_SECRET
+    assert config.qdrant_ingest_api_key.get_secret_value() == INGEST_SECRET
+    for shown in (repr(config), str(config), str(config.model_dump())):
+        for secret in (GROQ_SECRET, QDRANT_SECRET, INGEST_SECRET):
+            assert secret not in shown
+
+
+@pytest.mark.parametrize("key", [None, "", "   "])
+def test_rag_enabled_without_a_groq_key_is_refused(key):
+    text = _rag_error(**{**GROQ_RAG, "groq_api_key": key})
+    assert "rag_enabled requires: groq_api_key" in text
+
+
+def test_rag_enabled_without_the_external_consent_is_refused():
+    text = _rag_error(**{**GROQ_RAG, "allow_external_llm": False})
+    assert "allow_external_llm" in text
+    without = {k: v for k, v in GROQ_RAG.items() if k != "allow_external_llm"}
+    assert "allow_external_llm" in _rag_error(**without)  # never on by default
+
+
+@pytest.mark.parametrize("missing", ["llm_model", "groq_api_key", "qdrant_url", "qdrant_api_key"])
+def test_each_required_rag_field_is_named_when_missing(missing):
+    text = _rag_error(**{k: v for k, v in GROQ_RAG.items() if k != missing})
+    assert f"rag_enabled requires: {missing}" in text
+
+
+@pytest.mark.parametrize(
+    "ollama",
+    [
+        {"llm_provider": "ollama"},
+        {"llm_provider": "groq"},  # no provider selection at all, not even Groq's
+        {"llm_base_url": "http://127.0.0.1:11434"},
+        {"llm_internal_hosts": ["ollama"]},
+        {"ollama_base_url": "http://ollama:11434"},
+    ],
+)
+def test_no_ollama_or_provider_selection_setting_is_accepted(ollama):
+    _rag_error(**GROQ_RAG, **ollama)  # extra="forbid": unknown settings are refused
+
+
+def test_an_ollama_setting_in_the_env_file_is_refused(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_PROVIDER=ollama\nLLM_BASE_URL=http://127.0.0.1:11434\n")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=env_file, database_url="sqlite://", jwt_secret_key="k")
+
+
+def test_no_ollama_setting_exists():
+    names = set(Settings.model_fields)
+    assert not {n for n in names if "ollama" in n or n in ("llm_provider", "llm_base_url")}
+    assert "llm_internal_hosts" not in names
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://xyz.cloud.qdrant.io:6333",  # third-party storage
+        ":memory:",  # embedded mode is never a production setting
+        "/var/lib/qdrant",  # embedded path
+        "grpc://127.0.0.1:6334",
+        "http://admin:secret@127.0.0.1:6333",
+        "http://127.0.0.1:0",
+    ],
+)
+def test_qdrant_must_be_an_allowed_internal_http_server(url):
+    text = _rag_error(**{**GROQ_RAG, "qdrant_url": url})
+    assert "qdrant_url" in text
+    assert "cloud.qdrant.io" not in text and "admin:secret" not in text
+
+
+def test_the_qdrant_scheme_must_match_qdrant_https():
+    assert _settings(**{**GROQ_RAG, "qdrant_url": "https://qdrant:6333", "qdrant_https": True})
+    assert "qdrant_https" in _rag_error(**{**GROQ_RAG, "qdrant_https": True})
+    assert "qdrant_https" in _rag_error(**{**GROQ_RAG, "qdrant_url": "https://qdrant:6333"})
+
+
+def test_qdrant_internal_hosts_are_configurable_and_normalised():
+    config = _settings(
+        **{**GROQ_RAG, "qdrant_url": "http://vector.internal:6333"},
+        qdrant_internal_hosts=[" Vector.Internal "],
+    )
+    assert config.qdrant_internal_hosts == ["vector.internal"]
+    with pytest.raises(ValidationError):
+        _settings(qdrant_internal_hosts=["qdrant", "  "])
+    _rag_error(**GROQ_RAG, qdrant_internal_hosts=[])  # an empty list allows no host
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"qdrant_timeout": 0},
+        {"embedding_model": ""},
+        {"embedding_cache_dir": ""},
+        {"embedding_device": ""},
+    ],
+)
+def test_invalid_rag_values_are_refused(overrides):
+    with pytest.raises(ValidationError):
+        _settings(**overrides)
+
+
+def test_rag_settings_are_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("RAG_ENABLED", "true")
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-oss-120b")
+    monkeypatch.setenv("GROQ_API_KEY", GROQ_SECRET)
+    monkeypatch.setenv("ALLOW_EXTERNAL_LLM", "true")
+    monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
+    monkeypatch.setenv("QDRANT_API_KEY", QDRANT_SECRET)
+    monkeypatch.setenv("QDRANT_INTERNAL_HOSTS", '["qdrant"]')
+    monkeypatch.setenv("EMBEDDING_OFFLINE", "false")
+    config = _settings()
+    assert config.allow_external_llm is True and config.qdrant_internal_hosts == ["qdrant"]
+    assert config.embedding_offline is False
+
+
+def test_an_environment_secret_never_appears_in_a_validation_error(monkeypatch):
+    monkeypatch.setenv("RAG_ENABLED", "true")
+    monkeypatch.setenv("QDRANT_API_KEY", QDRANT_SECRET)
+    monkeypatch.setenv("GROQ_API_KEY", GROQ_SECRET)
+    monkeypatch.setenv("QDRANT_URL", "https://xyz.cloud.qdrant.io")
+    _rag_error()
