@@ -6,7 +6,9 @@ Compliance/LBC-FT, Management). Every access is audited.
 
 The long-term goal is a RAG chatbot over bank documents. The current increment
 delivers the secure foundation first: a role-filtered document library with
-simple full-text search (no LLM/RAG generation yet).
+simple full-text search. A RAG assistant is implemented but **disabled by
+default** and, even when enabled, **refuses every user** until the department →
+business layer mapping (decision H10) is defined (see section 5).
 
 **This README is the onboarding guide for the security team.** It explains how
 to set up the project, how to use Alembic migrations for testing, what the
@@ -171,6 +173,71 @@ Settings are loaded by `backend/app/core/config.py` via `pydantic-settings`.
 `DATABASE_URL` and `JWT_SECRET_KEY` are **required** — anything that loads
 `settings` (e.g. Alembic, and later the auth code) raises `ValidationError` if
 `.env` is missing or incomplete.
+
+### RAG assistant (optional, disabled by default)
+
+The RAG assistant exposes `POST /rag/chat` and `POST /rag/chat/stream`. It is
+**disabled by default** (`RAG_ENABLED=false`).
+
+- **LLM provider:** Groq, through `ChatGroq` (`langchain-groq`), is the **only**
+  provider. There is no other provider and no fallback. Every call goes through
+  `backend/app/services/Agentic_RAG/llm_adapters.py`: one request context per
+  question, masking/pseudonymisation before sending, call and size limits, and
+  one `LLM_CALL` audit event per provider call (no content).
+- **Known limits:** emails, IBANs, card and phone numbers are masked, but client
+  **names are not pseudonymised**: pseudonymisation only applies to known values
+  and the RAG provides none. Streaming is not progressive: the answer is sent as
+  one chunk, after its tokens are restored.
+- **External provider consent:** Groq is an external API. The RAG can only be
+  enabled with `ALLOW_EXTERNAL_LLM=true`, the explicit consent of decision H1.
+- **Dependencies:** the RAG stack lives in the optional `rag` dependency group
+  (Python ≥ 3.12). `uv sync` does not install it (the CI installs it in a
+  dedicated step):
+
+  ```bash
+  uv sync --group rag
+  ```
+
+Settings read by the RAG (see `backend/.env.example`, all optional while the
+RAG is disabled):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RAG_ENABLED` | `false` | Enables the RAG routes and their startup |
+| `ALLOW_EXTERNAL_LLM` | `false` | Consent to call Groq; **required** (`true`) when the RAG is enabled |
+| `LLM_MODEL` | — | Groq model identifier; **required**. A leading `groq:` is removed |
+| `GROQ_API_KEY` | — | Groq API key (secret); **required** |
+| `QDRANT_URL` | — | Internal Qdrant server, `http(s)://host:port`; **required**. The host must be in `QDRANT_INTERNAL_HOSTS`; no credentials in the URL; embedded mode (`:memory:`, a path) is refused |
+| `QDRANT_API_KEY` | — | Qdrant API key (secret); **required** |
+| `QDRANT_COLLECTION` | `rag_system_bank` | Collection queried by the RAG |
+| `QDRANT_INTERNAL_HOSTS` | `["127.0.0.1","localhost","qdrant"]` | Allowed Qdrant hosts (checked at startup) |
+| `QDRANT_HTTPS` | `false` | Must match the `QDRANT_URL` scheme (checked at startup) |
+| `MAX_PROVIDER_CALLS` | `12` | Provider calls per question |
+| `MAX_PROMPT_CHARS` | `32000` | Characters sent per provider call |
+| `TIMEOUT_SECONDS` | `30.0` | Timeout of each provider call |
+
+Declared and validated, **not used by the code yet**: `QDRANT_TIMEOUT`,
+`QDRANT_INGEST_API_KEY`, `EMBEDDING_CACHE_DIR`, `EMBEDDING_DEVICE`,
+`EMBEDDING_OFFLINE`, `EMBEDDING_MODEL`. The embedding model is currently loaded by
+`Data_preparation/vectorisation.py` from the **process environment** variable
+`EMBEDDING_MODEL` (default
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`), not from `.env`.
+The ingestion pipeline (`Data_preparation/storing.py`, used by `run_data_preparation.py`) reads
+`QDRANT_URL`, `QDRANT_API_KEY` and `QDRANT_COLLECTION` itself and does not use
+`QDRANT_INGEST_API_KEY` yet.
+
+Behaviour:
+
+| Situation | Result |
+|---|---|
+| `RAG_ENABLED=false` (default) | The API starts; the RAG stack is not imported; `/rag/*` answers `503 {"detail": "Assistant RAG indisponible"}` |
+| `RAG_ENABLED=true` with a missing or invalid setting above | `settings` raises `ValidationError`: the API (and anything loading `settings`) does **not** start. Messages name the fields, never their values |
+| `RAG_ENABLED=true`, `rag` group not installed | The API starts; log `RAG enabled but not importable: <ErrorType>`; `/rag/*` answers 503 |
+| RAG initialisation fails (embedding model, Qdrant unreachable, collection missing) | The API starts; log `RAG initialisation failed: <ErrorType>` (type only); `/rag/*` answers 503 |
+| RAG running | Authenticated users with the `search` permission. The department → business layer mapping (decision H10) is **not defined yet**, so every user is refused with `403` and an `ACCESS_DENIED` / `DEPARTMENT_FORBIDDEN` audit event |
+
+> Keep LangChain/LangSmith tracing disabled (`LANGSMITH_TRACING` unset or
+> `false`): a tracer would receive the messages before the adapters mask them.
 
 ### Secrets rules
 
@@ -347,7 +414,10 @@ uv run uvicorn app.main:app --reload
 | `http://localhost:8000/docs` | Swagger UI (OpenAPI) |
 | `http://localhost:8000/health` | Health check → `{"status": "ok"}` |
 
-That is currently the **only** endpoint — the API surface is sprint work.
+The API also exposes the authentication, documents, users, departments and
+audit routes (`backend/app/api/router.py`, listed in Swagger UI), and the RAG
+routes `POST /rag/chat` and `POST /rag/chat/stream`, which answer 503 while the
+RAG is disabled (see section 5).
 
 ---
 
@@ -361,10 +431,13 @@ uv run pytest -v          # verbose
 uv run pytest --cov=app   # with coverage
 ```
 
-> **Current state:** the test suite was cleared during the last restructure
-> and is being rebuilt. `pytest` runs green because there are no tests yet —
-> not because everything passes. Every security feature must ship with tests
-> (backlog §8, summarized in section 11).
+> **Current state:** the backend suite covers authentication, documents,
+> users, audit, suspicious-activity detection, the US 07 modules and the RAG
+> assistant. The RAG tests (`tests/test_rag_access.py`, `test_rag_audit.py`,
+> `test_rag_llm_adapters.py`, `test_main_rag.py`) need the `rag` dependency
+> group (`uv sync --group rag`); without it they are skipped. The CI installs the
+> group in a dedicated step and runs them. Every security feature must ship with
+> tests (backlog §8, summarized in section 11).
 
 Test configuration lives in `pyproject.toml` (`testpaths = ["tests"]`).
 

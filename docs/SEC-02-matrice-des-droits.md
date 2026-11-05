@@ -119,27 +119,36 @@ Exécution : `cd backend && uv run pytest`.
   la détection (`GET /audit/alerts`) les signale mais ne les bloque pas.
 - Les permissions sont déclarées dans plusieurs dictionnaires `ROLE_PERMISSIONS`
   répartis par route ; il n'existe pas encore de source unique.
-- Le chat RAG n'existe pas encore : aucune route ne l'expose (I-4) et aucun
-  fournisseur LLM n'est choisi (H1). La passerelle interne
-  (`backend/app/services/llm_gateway.py`) existe et est testée comme service, avec
-  un faux fournisseur (voir § 5.5) ; les tests de non-divulgation et de
-  cloisonnement inter-couches **via le chat** (SEC-02) restent à écrire. Les
+- Le chat RAG existe dans le code (`POST /rag/chat`, `POST /rag/chat/stream`,
+  `backend/app/api/rag.py`) mais n'est **pas ouvert aux utilisateurs** : il est
+  désactivé par défaut (`RAG_ENABLED=false`, réponse 503) et, une fois activé, il
+  refuse **tout** utilisateur, `ADMIN` compris : `require_permission("search")`
+  puis contrôle du périmètre par département, dont la table
+  (`DEPARTMENT_LAYERS`, `Agentic_RAG/retriever_tools.py`) est **vide** tant que la
+  décision H10 n'est pas prise (403, événement `ACCESS_DENIED` /
+  `DEPARTMENT_FORBIDDEN`). Le seul fournisseur du code est Groq (`ChatGroq`), dont
+  l'utilisation exige `ALLOW_EXTERNAL_LLM=true` (faux par défaut) ; la décision
+  H1 reste ouverte. Les tests via le chat existent avec un faux fournisseur et une
+  correspondance département → couche **propre aux tests** (§ 5.6). Les
   identifiants de couche du pipeline RAG (`business_layer` dans
-  `Agentic_RAG/Data_preparation/ingestion.py`) ne correspondent pas encore aux
-  noms de départements en base.
+  `Agentic_RAG/Data_preparation/ingestion.py`) ne correspondent toujours pas aux
+  noms de départements en base (H10).
 
 ## 5. SEC-02 T4 — Non-divulgation et résistance à l'injection (clôture partielle)
 
-Aucun prompt n'est aujourd'hui envoyé à un véritable fournisseur LLM : les
-modules `rag_agent.py`, `retriever_tools.py` et `augmentation_tool.py` sont vides,
-aucun client LLM n'existe (H1) et l'API n'expose aucune route chat/RAG (I-4). La
-passerelle interne (US 07 T5) construit en revanche un prompt et l'envoie à un
-fournisseur **fourni par l'appelant** : elle est testée avec un faux fournisseur qui
-capture le prompt réellement transmis (§ 5.5). SEC-02 T4 reste **close
-partiellement** : contrôles **amont** sur la préparation des données
-(`Agentic_RAG/Data_preparation/`, §§ 5.1 à 5.3) et contrôles **au niveau de la
-passerelle** (§ 5.5) ; la résistance à l'injection face à un vrai modèle reste à
-tester. Bilan complet : `docs/SEC-02-rapport-tests-securite.md`.
+Aucun prompt n'a été envoyé à un véritable fournisseur LLM lors des tests : tous
+les tests utilisent un faux fournisseur. Le code de l'agent RAG
+(`backend/app/services/Agentic_RAG/`) n'enverrait un prompt à Groq que si le RAG
+est activé, avec `ALLOW_EXTERNAL_LLM=true`, et pour un utilisateur dont le
+département a une couche (H10, non décidée). La passerelle interne (US 07 T5,
+`llm_gateway.py`) construit un prompt et l'envoie à un fournisseur **fourni par
+l'appelant** ; elle n'est appelée par aucune route. L'agent RAG passe par un autre
+chemin : le contexte de requête (`llm_request.py`) et les adaptateurs
+(`Agentic_RAG/llm_adapters.py`), § 5.6. SEC-02 T4 reste **close partiellement** :
+contrôles **amont** sur la préparation des données
+(`Agentic_RAG/Data_preparation/`, §§ 5.1 à 5.3), au niveau de la passerelle
+(§ 5.5) et de l'agent RAG (§ 5.6) ; la résistance à l'injection face à un vrai
+modèle reste à tester. Bilan complet : `docs/SEC-02-rapport-tests-securite.md`.
 
 ### 5.1 Contrôles réalisés
 
@@ -193,13 +202,13 @@ synthétique contenant un marqueur unique par couche :
 | Scénario | Critère de réussite | État (SEC-02 T6) |
 |---|---|---|
 | Question dont la réponse est dans une autre couche | Aucun extrait de cette couche dans le prompt capturé ni dans la réponse | 🟡 Démontré pour le **prompt capturé** au niveau de la passerelle (§ 5.5) ; réponse d'un vrai modèle et parcours via le chat en attente (H1, I-2, I-4) |
-| Filtrage avant **et** après récupération | Un extrait hors couche est écarté avant l'envoi au fournisseur | 🟡 **Après** récupération : démontré (§ 5.5) ; **avant** (filtre dans la requête Qdrant) : en attente (I-5, H10) |
+| Filtrage avant **et** après récupération | Un extrait hors couche est écarté avant l'envoi au fournisseur | 🟡 **Après** récupération : démontré (§ 5.5, § 5.6) ; **avant** (filtre dans la requête Qdrant) : implémenté et démontré sur un Qdrant local en mémoire avec une correspondance de test (§ 5.6) ; pour de vrais utilisateurs, en attente de H10 |
 | Plusieurs tours de conversation | Le filtre s'applique à chaque tour | 🟡 Démontré requête par requête (§ 5.5) ; conversation à plusieurs tours en attente (I-4, décision D3) |
 | Énumération (« le document X existe-t-il ? ») | La réponse ne confirme pas l'existence d'un document refusé | ⏳ En attente (I-4, H1). Seul fait démontré : sans extrait autorisé, le fournisseur n'est pas appelé |
 | Données sensibles dans les extraits | Aucune donnée sensible non masquée ni métadonnée interne (`file_path`…) dans le prompt capturé | ✅ Démontré au niveau de la passerelle (§ 5.5), pour les valeurs que T3 détecte ou que l'appelant déclare |
 | Injection directe dans la question | Aucun document hors couche, aucun contournement des consignes | ⏳ En attente d'un vrai modèle (H1). Le contenu hors couche n'atteint jamais le prompt, ce qui n'est pas une preuve de résistance à l'injection |
 | Injection indirecte dans un document autorisé | La consigne cachée n'est pas exécutée et l'incident est journalisé | ⏳ En attente (H1) ; aucune détection d'injection n'est prévue dans la passerelle (décision D1) |
-| Jeton absent, invalide ou d'un autre rôle | 401/403 et **aucun** appel au fournisseur | ⏳ En attente de la route authentifiée (I-4) |
+| Jeton absent, invalide ou d'un autre rôle | 401/403 et **aucun** appel au fournisseur | 🟡 Route authentifiée (`get_current_user`, `require_permission`) : sans jeton, 401 sans appel au service ; utilisateur sans périmètre, 403 audité sans appel au service (§ 5.6). Jeton invalide sur `/rag/*` non testé spécifiquement (même dépendance que les autres routes) |
 
 ### 5.5 Contrôles au niveau de la passerelle (US 7, T3 à T5)
 
@@ -225,8 +234,37 @@ Limites de ces contrôles :
 - Ils portent sur le **prompt capturé**, pas sur la réponse d'un vrai modèle.
 - Les couches autorisées sont fournies par l'appelant : leur calcul à partir de
   l'utilisateur connecté n'existe pas (H10).
-- La passerelle n'est appelée par aucune route (I-4) : aucune de ces garanties ne
-  s'applique encore à un parcours utilisateur réel.
+- La passerelle n'est appelée par aucune route : l'agent RAG utilise le contexte
+  de requête et les adaptateurs (§ 5.6), pas `llm_gateway.ask`.
 - Les données sensibles non déclarées et non détectées par T3 (noms sans liste de
   valeurs connues, adresses, téléphones nationaux) ne sont pas masquées
   (décisions D1 à D3 de T3).
+
+### 5.6 Contrôles au niveau de l'agent RAG
+
+Fichiers : `backend/app/api/rag.py`, `Agentic_RAG/rag_agent.py`,
+`Agentic_RAG/llm_adapters.py`, `Agentic_RAG/retriever_tools.py`,
+`Agentic_RAG/search_tools.py`. Tests (groupe de dépendances `rag`, exécutés par une
+étape dédiée de la CI) : `backend/tests/test_rag_access.py`, `test_rag_audit.py`,
+`test_rag_llm_adapters.py`, `test_main_rag.py`. Faux fournisseur, Qdrant local en
+mémoire, correspondance département → couche **propre aux tests** : aucun vrai
+modèle, aucun utilisateur réel.
+
+| Contrôle | Vérifie | Tests |
+|---|---|---|
+| Fournisseur unique | Groq via `ChatGroq` seulement, jusqu'au client du SDK ; aucun autre client | `test_rag_llm_adapters.py::test_the_request_really_goes_through_chatgroq`, `::test_no_direct_provider_client_outside_the_adapters` |
+| Consentement H1 | Sans `ALLOW_EXTERNAL_LLM`, rien n'est construit ni envoyé | `test_rag_llm_adapters.py::test_without_external_consent_nothing_is_built_bound_or_sent` |
+| Refus par défaut | Département sans couche (tous aujourd'hui), `ADMIN` compris : 403 audité, aucun appel | `test_rag_access.py::test_the_route_refuses_without_a_mapping_and_audits_it`, `::test_the_route_requires_authentication` |
+| Cloisonnement de la récupération | Filtre d'accès dans la requête Qdrant, revérifié après ; le filtre du self-query ne peut que restreindre | `test_rag_access.py::test_a_user_cannot_retrieve_a_layer_outside_its_scope`, `::test_the_llm_filter_can_only_narrow_the_access_filter`, `test_rag_audit.py::test_route_sources_stay_in_the_user_scope` |
+| Contexte envoyé | Passage par `rag_context.build_context` (T4) ; seules `source` et `page` transmises ; note C3 exclue | `test_rag_access.py::test_forbidden_metadata_are_never_sent` et tests voisins |
+| Protection | Masquage et pseudonymisation avant envoi ; restauration des seuls jetons envoyés | `test_rag_llm_adapters.py::test_everything_sent_is_protected_before_the_provider`, `::test_only_the_tokens_sent_by_this_call_are_restored` |
+
+Limites :
+
+- **Noms de clients** : le contexte de requête du RAG ne reçoit aucune liste de
+  valeurs connues ; seuls email, IBAN, carte et téléphone sont masqués, les noms
+  ne sont pas pseudonymisés (`test_rag_llm_adapters.py::test_the_real_request_context_masks_before_the_provider`).
+- **Streaming** non progressif : la réponse est émise en un seul fragment, après
+  restauration.
+- Couches d'un utilisateur (H10), périmètre de l'`ADMIN` (H11) et accès du Front
+  Office à la procédure LBC-FT (H4) : **non décidés**.

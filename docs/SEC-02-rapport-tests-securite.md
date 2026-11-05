@@ -141,9 +141,21 @@ Défauts trouvés par les revues indépendantes, tous corrigés et couverts par 
 
 ## 5. Limites restantes
 
-- **Rien n'est branché en production** : aucune route n'appelle la passerelle ni
-  `log_gateway_call` (I-4). Les garanties de T3 à T5 sont démontrées sur les modules,
-  pas sur un parcours utilisateur réel.
+- **Aucun parcours utilisateur réel** : les routes RAG (`POST /rag/chat`,
+  `POST /rag/chat/stream`) existent, mais le RAG est désactivé par défaut et, une fois
+  activé, refuse tout utilisateur tant que la table département → couche
+  (`DEPARTMENT_LAYERS`) est vide (H10). La passerelle T5 (`llm_gateway.ask`) et
+  `log_gateway_call` ne sont appelées par aucune route : l'agent RAG passe par le
+  contexte de requête et ses adaptateurs, et ses appels sont journalisés par
+  `log_request_calls` (`docs/SEC-02-matrice-des-droits.md` § 5.6). Les garanties sont
+  démontrées par des tests avec un faux fournisseur, pas sur un parcours réel.
+- **Fournisseur** : le code utilise uniquement Groq (`ChatGroq`), seulement si
+  `ALLOW_EXTERNAL_LLM=true` (faux par défaut) ; la décision H1 reste ouverte.
+- **Pseudonymisation partielle dans le RAG** : aucune liste de valeurs connues n'est
+  fournie au contexte de requête ; les noms de clients ne sont pas pseudonymisés
+  (seuls email, IBAN, carte et téléphone sont masqués).
+- **Streaming non progressif** : la réponse est émise en un seul fragment, après
+  restauration des jetons.
 - **Composants simulés** : le comportement d'un vrai modèle, d'un vrai récupérateur et
   du filtrage réel par Qdrant n'est pas testé.
 - **`file_path` stocké dans Qdrant** : non corrigé (I-1) ; T4 empêche sa transmission
@@ -162,12 +174,12 @@ Défauts trouvés par les revues indépendantes, tous corrigés et couverts par 
 
 | Scénario (`docs/SEC-02-matrice-des-droits.md` § 5.4) | Dépendance bloquante |
 |---|---|
-| Cloisonnement inter-couches **via le chat**, de bout en bout | I-2 (récupération), I-4 (route), H10 (couches d'un utilisateur) |
-| Filtrage **avant** la recherche | I-5 (filtre dans la requête Qdrant), H10 |
+| Cloisonnement inter-couches **via le chat**, de bout en bout, pour de vrais utilisateurs | H10 (couches d'un utilisateur). Démontré avec une correspondance propre aux tests et un faux fournisseur (`docs/SEC-02-matrice-des-droits.md` § 5.6) |
+| Filtrage **avant** la recherche, pour de vrais utilisateurs | H10. Le filtre dans la requête Qdrant est implémenté et testé sur un Qdrant local en mémoire |
 | Plusieurs tours de conversation dans un même échange | I-4 (historique, décision D3) |
 | Énumération (« le document X existe-t-il ? ») sur une réponse réelle | I-4 et H1 (vrai modèle) |
 | Injection directe et indirecte | H1 (vrai modèle) |
-| Jeton absent, invalide ou d'un autre rôle : 401/403 et **aucun** appel au fournisseur | I-4 (route authentifiée) |
+| Jeton invalide sur `/rag/*` : 401 et **aucun** appel au fournisseur | Non testé spécifiquement (même dépendance `get_current_user` que les autres routes). Jeton absent (401) et utilisateur sans périmètre (403) : testés, sans appel au service |
 
 ## 7. Bilan par tâche SEC-02
 
@@ -176,8 +188,8 @@ Défauts trouvés par les revues indépendantes, tous corrigés et couverts par 
 | T1 Matrice des droits | ✅ Terminée |
 | T2 Scénarios RBAC | ✅ Terminée |
 | T3 Automatisation | ✅ Terminée |
-| T4 Non-divulgation et injection | 🟡 Partielle : contrôles amont (N1 à N3) et non-divulgation au niveau de la passerelle démontrés ; résistance à l'injection en attente de H1 |
-| T5 Cloisonnement inter-couches via le chat | 🟡 Partielle : démontré au niveau de la passerelle ; « via le chat » en attente de I-2, I-4 et H10 |
+| T4 Non-divulgation et injection | 🟡 Partielle : contrôles amont (N1 à N3) et non-divulgation démontrés au niveau de la passerelle et de l'agent RAG, avec un faux fournisseur ; résistance à l'injection en attente de H1 (vrai modèle) |
+| T5 Cloisonnement inter-couches via le chat | 🟡 Partielle : démontré via la route RAG avec une correspondance propre aux tests ; pour de vrais utilisateurs, en attente de H10 |
 | T6 Rapport de tests de sécurité | ✅ Ce document |
 
 ## 8. Documents liés

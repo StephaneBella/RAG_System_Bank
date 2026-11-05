@@ -234,8 +234,14 @@ fusion. Tous ces appels partagent le contexte de la requête
 (`backend/app/services/llm_request.py`), qui produit un compte rendu sans texte par
 appel. `log_request_calls` (`backend/app/services/audit.py`) les journalise **à la
 fin de la requête**, un événement `LLM_CALL` par appel ; `log_provider_call`
-journalise un seul appel. Aucune route ne les appelle encore (intégration de
-l'agent à venir).
+journalise un seul appel. Les routes RAG (`POST /rag/chat`, `POST /rag/chat/stream`,
+`backend/app/api/rag.py`) appellent `log_request_calls` une fois le contexte de la
+requête fermé, y compris en cas d'erreur, de délai dépassé, de limite atteinte ou
+d'interruption du flux ; une requête sans appel au fournisseur n'écrit rien.
+`log_provider_call` n'est appelé par aucune route. Le RAG étant désactivé par
+défaut et fermé à tous les utilisateurs tant que H10 n'est pas décidée, aucun
+événement `provider_call` n'est produit aujourd'hui en dehors des tests
+(`backend/tests/test_rag_audit.py`).
 
 | Champ | Valeur |
 |---|---|
@@ -332,18 +338,20 @@ départements : leurs identifiants diffèrent (`credit_risques` / `Credit & Risq
   proxy, les règles par IP perdent leur sens.
 - Seuils empiriques, à ajuster en recette ; R5 peut être contourné par une
   montée progressive de l'activité.
-- **Journalisation des appels LLM non branchée en production** :
-  `log_gateway_call` existe et est testée, mais aucune route `/chat` ne l'appelle
-  encore. La journalisation effective des appels à la passerelle dépend donc de
-  la création de l'endpoint RAG (tâche I-4) ; d'ici là, aucun événement
-  `LLM_CALL` n'est produit en dehors des tests.
+- **Passerelle T5 non branchée** : `log_gateway_call` existe et est testée, mais
+  aucune route ne l'appelle ; l'agent RAG n'utilise pas la passerelle T5 et ses
+  appels sont journalisés avec `provider_call` (voir « Appels fournisseur de
+  l'agent RAG »).
 - R5 compte les appels `LLM_CALL` : un usage légitime et intensif du chat peut
   produire une alerte `ACTIVITY_SPIKE`. Avec l'agent RAG, chaque question produit
   plusieurs appels fournisseur, donc plusieurs événements : l'effet est multiplié
   (voir « R5 — formule de référence »). Décision ouverte.
-- **Journalisation des appels fournisseur non branchée** : `log_request_calls` et
-  `log_provider_call` existent et sont testées, mais aucune route ne les appelle
-  encore ; aucun événement `provider_call` n'est produit en dehors des tests.
+- **Appels fournisseur : branchés mais inactifs** : les routes RAG appellent
+  `log_request_calls`, mais le RAG est désactivé par défaut et refuse tous les
+  utilisateurs tant que H10 n'est pas décidée ; aucun événement `provider_call`
+  n'est produit en dehors des tests. Un délai dépassé du SDK Groq est enregistré
+  avec `error_type = "TimeoutError"`. Les actions de la mémoire de l'agent
+  (enregistrement, recherche) ne sont pas journalisées.
 - R1a et R1b peuvent produire deux alertes (compte et IP) pour une même rafale ;
   R1b peut produire deux alertes pour une même IP (jetons rejetés, jetons absents).
 - Un changement de `JWT_SECRET_KEY` invalide tous les jetons en cours et peut

@@ -12,6 +12,13 @@ incertitudes U1 à U8.
 > Les règles de transmission sont des **exigences** pour US 07 T3 à T5 et pour
 > les tâches I-2 à I-5. Les décisions H1 à H12 (§ 10) sont **ouvertes** : ce
 > document ne les tranche pas.
+>
+> **Mise à jour (branche `temgoua_feat/auth-user-access-audit`) :** l'agent RAG
+> est intégré au code, avec Groq (`ChatGroq`) pour seul fournisseur. Il est
+> désactivé par défaut, n'appelle Groq qu'avec `ALLOW_EXTERNAL_LLM=true` et refuse
+> tous les utilisateurs tant que H10 n'est pas décidée : aucune donnée n'est
+> transmise en dehors des tests. Les décisions H1 à H12 restent **ouvertes**
+> (§ 13.1).
 
 ## 1. Objet et périmètre
 
@@ -49,7 +56,7 @@ Reprise du brouillon :
 | M5 — pseudonymiser les entités | Ne distingue pas masquage et pseudonymisation | `MIN-PROS-01` à `MIN-PROS-06`, conformes à T1 § 5 |
 | M6 — dé-pseudonymiser côté serveur | Incomplète | `MIN-LLM-07` : ne réinsérer que les valeurs que l'utilisateur a le droit de voir |
 | M7 — aucun secret dans le prompt | Valable | `MIN-SEC-01` |
-| M8 — journaliser chaque appel, jamais le contenu | Valable ; l'action d'audit `LLM_CALL` (US 07 T5) journalise désormais chaque appel à la passerelle sans contenu, mais pas la couche (H10), et aucune route n'appelle encore cette journalisation (I-4) | `MIN-LLM-09` |
+| M8 — journaliser chaque appel, jamais le contenu | Valable ; l'action d'audit `LLM_CALL` (US 07 T5) journalise désormais chaque appel à la passerelle sans contenu, mais pas la couche (H10) ; la passerelle T5 n'est appelée par aucune route. Les appels de l'agent RAG sont journalisés par la route RAG avec `provider_call` (un événement par appel, sans contenu), route désactivée par défaut et fermée à tous (H10) | `MIN-LLM-09` |
 | § 4.3 — stocker « la longueur ou une empreinte » de la requête | Une empreinte d'une requête courte peut être retrouvée par dictionnaire | `MIN-AUD-04` (pas d'empreinte) ; longueur : décision H8 |
 | Exigences de la passerelle | Relèvent de US 07 T5 | Citées en `MIN-LLM-10` comme dépendances |
 
@@ -68,7 +75,7 @@ statuts suivants :
 | **APPLICABLE** | Ne dépend d'aucun composant manquant ; reste à implémenter ou à appliquer en procédure |
 | **RETRIEVER** | Dépend du futur module de récupération et du filtrage par couche (I-2, I-5) |
 | **FOURNISSEUR** | Dépend du choix du fournisseur de LLM et de la passerelle (décision D1 / H1, US 07 T5) |
-| **RESPECTÉE (module testé)** | Appliquée par un module testé (US 07 T3, T4 ou T5) qui n'est encore appelé par aucune route : l'intégration en production reste à faire (I-4). Ajouté lors de SEC-02 T6, voir § 13 |
+| **RESPECTÉE (module testé)** | Appliquée par un module testé (US 07 T3, T4 ou T5), mais pas encore à un parcours utilisateur réel : la route RAG existe, désactivée par défaut et fermée à tous tant que H10 n'est pas décidée. Ajouté lors de SEC-02 T6, voir § 13 et § 13.1 |
 
 Les numéros de ligne renvoient à l'arbre de travail de la branche
 `temgoua_feat/auth-user-access-audit` ; certains fichiers cités portent des
@@ -81,7 +88,7 @@ modifications non encore commitées.
 | MIN-GEN-01 | **Nécessité** : une donnée n'est collectée, conservée ou transmise que si elle sert une finalité identifiée dans ce document | APPLICABLE |
 | MIN-GEN-02 | **Échec fermé** : une donnée ou un document non classé est traité comme exclu. Pour le corpus, c'est déjà le cas : un PDF absent du registre est refusé (`backend/app/services/Agentic_RAG/Data_preparation/ingestion.py:64-68`, test `backend/tests/test_rag_ingestion_security.py:107`) | RESPECTÉE (corpus) / APPLICABLE (autres données) |
 | MIN-GEN-03 | **Cloisonnement** : un utilisateur n'obtient que des données de sa couche. Appliqué pour la bibliothèque (`backend/app/api/routes/documents.py:260`, tests `backend/tests/test_documents.py:186`, `:202`) ; pas encore pour le RAG | RESPECTÉE (bibliothèque) / RETRIEVER (RAG) |
-| MIN-GEN-04 | **Aucun contenu dans les journaux** : ni texte de document, ni question, ni secret | RESPECTÉE (`backend/app/services/audit.py:31-37`, tests `backend/tests/test_audit.py:390`, `:594`) |
+| MIN-GEN-04 | **Aucun contenu dans les journaux** : ni texte de document, ni question, ni secret | RESPECTÉE (`backend/app/services/audit.py:176-183`, tests `backend/tests/test_audit.py:390`, `:594`) |
 | MIN-GEN-05 | **Traitements côté serveur** : filtrage, masquage, pseudonymisation et appel au LLM ne sont jamais réalisés dans le frontend | RESPECTÉE (aucun appel LLM dans le frontend, T1 § 4.7) / RESPECTÉE (module testé : passerelle côté serveur, `backend/app/services/llm_gateway.py`, `tests/test_llm_gateway.py`) / I-4 (intégration) |
 | MIN-GEN-06 | **La classification est fixée par le propriétaire métier** ; les niveaux C0 à C3 de T1 sont des propositions jusqu'à validation (H3) | APPLICABLE |
 
@@ -116,10 +123,10 @@ Classifications de T1 § 2.
 
 | ID | Aspect | Règle | Statut | Preuve ou tâche |
 |---|---|---|---|---|
-| MIN-AUD-01 | Nécessaire | Le journal contient ce qu'exigent la traçabilité et la détection SEC-01 : acteur, action, ressource, résultat, horodatage, IP, départements, durée, motif, identifiants des documents | RESPECTÉE | `backend/app/models/audit_log.py:60-117` ; `docs/SEC-01-detection-comportements-suspects.md` « Format du journal » |
-| MIN-AUD-02 | Exclure | `details` n'accepte que `reason` (énumération fermée) et `document_ids` (entiers) : aucun texte libre | RESPECTÉE | `backend/app/services/audit.py:31-37` ; test `backend/tests/test_audit.py:594` |
+| MIN-AUD-01 | Nécessaire | Le journal contient ce qu'exigent la traçabilité et la détection SEC-01 : acteur, action, ressource, résultat, horodatage, IP, départements, durée, motif, identifiants des documents | RESPECTÉE | `backend/app/models/audit_log.py:62-119` ; `docs/SEC-01-detection-comportements-suspects.md` « Format du journal » |
+| MIN-AUD-02 | Exclure | `details` n'accepte que `reason` (énumération fermée) et `document_ids` (entiers) : aucun texte libre | RESPECTÉE | `backend/app/services/audit.py:176-183` ; test `backend/tests/test_audit.py:594` |
 | MIN-AUD-03 | Exclure | Aucun jeton, en-tête `Authorization`, mot de passe ni secret dans le journal ou les alertes | RESPECTÉE | Tests `backend/tests/test_audit.py:390`, `backend/tests/test_suspicious_activity.py:648` |
-| MIN-AUD-04 | Exclure | Le terme recherché n'est pas journalisé, **ni en clair ni sous forme d'empreinte**. Seuls les identifiants des documents renvoyés le sont | RESPECTÉE | `backend/app/services/audit.py:36-37` ; tests `backend/tests/test_documents.py:642`, `:660`. Stocker la longueur seule : décision H8 |
+| MIN-AUD-04 | Exclure | Le terme recherché n'est pas journalisé, **ni en clair ni sous forme d'empreinte**. Seuls les identifiants des documents renvoyés le sont | RESPECTÉE | `backend/app/services/audit.py:182-183` ; tests `backend/tests/test_documents.py:642`, `:660`. Stocker la longueur seule : décision H8 |
 | MIN-AUD-05 | Exclure | Aucune donnée du journal n'entre dans un prompt | RESPECTÉE (module testé) / I-4 (intégration) | `llm_gateway.py` n'accède pas au journal ; seul son compte rendu sans contenu y est écrit |
 | MIN-AUD-06 | Masquer / pseudonymiser | Aucune transformation dans le journal : l'email et l'IP sont nécessaires à l'investigation. Leur exposition est restreinte par l'accès (MIN-AUD-07) | RESPECTÉE | — |
 | MIN-AUD-07 | Autorisation | Lecture, export et alertes réservés à `ADMIN` | RESPECTÉE | `backend/app/api/routes/audit.py:19-25` |
@@ -131,7 +138,7 @@ Classifications de T1 § 2.
 | ID | Aspect | Règle | Statut | Preuve ou tâche |
 |---|---|---|---|---|
 | MIN-SEC-01 | Exclure | Aucun secret (`JWT_SECRET_KEY`, mot de passe de la base, `SEED_ADMIN_PASSWORD`, `QDRANT_API_KEY`, future clé du fournisseur de LLM) dans un prompt, un journal, une réponse d'API, le frontend ou Git | RESPECTÉE (Git, journal) / FOURNISSEUR (prompt) | `.gitignore:13-17` ; tests `backend/tests/test_audit.py:390`, `backend/tests/test_suspicious_activity.py:648` ; avancement : la passerelle ne lit aucun secret ; l'assembleur du prompt reste fourni par l'appelant (I-3) |
-| MIN-SEC-02 | Nécessaire | Les secrets ne sont lus que côté serveur, depuis l'environnement | RESPECTÉE | `backend/app/core/config.py:13-23`, `backend/app/services/Agentic_RAG/Data_preparation/storing.py:18-20` |
+| MIN-SEC-02 | Nécessaire | Les secrets ne sont lus que côté serveur, depuis l'environnement | RESPECTÉE | `backend/app/core/config.py:42-52`, `backend/app/services/Agentic_RAG/Data_preparation/storing.py:22-24` |
 | MIN-SEC-03 | Contrôle | Chaque variable d'environnement attendue figure dans `backend/.env.example` **sans valeur réelle**. `QDRANT_URL`, `QDRANT_API_KEY`, `QDRANT_COLLECTION` et `EMBEDDING_MODEL` y manquent | APPLICABLE | T1 écart E6 ; tâche I-1 |
 | MIN-SEC-04 | Masquer / pseudonymiser | Sans objet : un secret n'est jamais transformé, il est exclu | — | — |
 | MIN-SEC-05 | Conservation | Rotation des secrets : **aucune procédure définie** | — | Décision H7 |
@@ -165,9 +172,9 @@ Classifications de T1 § 2.
 
 | ID | Aspect | Règle | Statut | Preuve ou tâche |
 |---|---|---|---|---|
-| MIN-QDR-01 | Nécessaire | Un point contient le texte du chunk, son vecteur et les métadonnées de filtrage et de citation (`source`, `page`, `doc_type`, `business_layer`) | RESPECTÉE | `storing.py:63-68` |
-| MIN-QDR-02 | Exclure | `file_path` ne doit plus être stocké dans le payload | APPLICABLE | `storing.py:66` ; test (constat) `backend/tests/test_rag_ingestion_security.py:205` ; T1 E1 ; I-1 |
-| MIN-QDR-03 | Nécessaire | Les étiquettes de couche sont indexées pour le filtrage | RESPECTÉE | `storing.py:37-43` ; test `backend/tests/test_rag_ingestion_security.py:197` |
+| MIN-QDR-01 | Nécessaire | Un point contient le texte du chunk, son vecteur et les métadonnées de filtrage et de citation (`source`, `page`, `doc_type`, `business_layer`) | RESPECTÉE | `storing.py:72-82` |
+| MIN-QDR-02 | Exclure | `file_path` ne doit plus être stocké dans le payload | APPLICABLE | `storing.py:75-79` ; test (constat) `backend/tests/test_rag_ingestion_security.py:205` ; T1 E1 ; I-1 |
+| MIN-QDR-03 | Nécessaire | Les étiquettes de couche sont indexées pour le filtrage | RESPECTÉE | `storing.py:42-52` ; test `backend/tests/test_rag_ingestion_security.py:197` |
 | MIN-QDR-04 | Autorisation | Toute lecture de Qdrant applique le filtre de couche **dans la requête** (pré-récupération), puis une vérification avant l'envoi (post-récupération) | RESPECTÉE (module testé : vérification après récupération, T4) / RETRIEVER (filtre dans la requête, I-5, H10) | I-5 ; T1 E2 ; `tests/test_llm_gateway.py::test_only_authorised_layers_reach_the_captured_prompt` |
 | MIN-QDR-05 | Conservation | Un document retiré ou déclassé doit être supprimé de Qdrant. Aucun mécanisme n'existe : l'écriture se fait par upsert uniquement | APPLICABLE | I-1 |
 | MIN-QDR-06 | Autorisation | L'hébergement de Qdrant détermine si le texte des documents privés sort de l'infrastructure. Aucun document C2 ou C3 ne devrait être stocké chez un tiers sans décision explicite | APPLICABLE (règle) | Décision H2 ; T1 U1, E7 |
@@ -175,8 +182,10 @@ Classifications de T1 § 2.
 
 ### 6.7 Données transmises à une future passerelle LLM (T1 § 4.8)
 
-Aucune de ces règles n'est appliquée en production : aucune route n'appelle la
-passerelle (I-4) et aucun fournisseur n'est choisi (H1). Depuis US 07 T5, la
+Aucune de ces règles n'est appliquée à un parcours utilisateur réel : la route RAG
+existe mais est désactivée par défaut et fermée à tous tant que H10 n'est pas
+décidée ; le code utilise Groq (`ChatGroq`) seulement si `ALLOW_EXTERNAL_LLM=true`,
+la décision H1 restant ouverte (§ 13.1). Depuis US 07 T5, la
 passerelle interne (`backend/app/services/llm_gateway.py`) applique et teste
 plusieurs d'entre elles avec un faux fournisseur : leur statut l'indique par
 « RESPECTÉE (module testé) » (voir § 13).
@@ -220,7 +229,7 @@ la banque : **aucune durée n'est fixée ici** (H7).
 
 | Élément | Fait vérifié | Référence |
 |---|---|---|
-| Jeton d'accès | Validité 60 minutes par défaut, configurable | `backend/app/core/config.py:17` |
+| Jeton d'accès | Validité 60 minutes par défaut, configurable | `backend/app/core/config.py:46` |
 | Invitation | Validité 24 heures ; usage unique (`used_at`) | `backend/app/services/invitation_service.py:14`, `:66`, `:84` |
 | Invitations utilisées ou expirées | Jamais purgées | Aucune suppression dans `backend/app/services/invitation_service.py` |
 | Jetons révoqués | Conservés avec leur `expires_at`, jamais purgés | `backend/app/api/routes/auth.py:88-90`, `backend/app/models/revoked_token.py:12-13` |
@@ -236,7 +245,7 @@ la banque : **aucune durée n'est fixée ici** (H7).
 |---|---|---|
 | MIN-CONS-01 | Une ligne de `revoked_tokens` n'a plus d'utilité après son `expires_at` : le jeton est alors refusé par l'expiration elle-même. Sa suppression après cette date ne réduit pas la sécurité | APPLICABLE (purge à implémenter si décidée) |
 | MIN-CONS-02 | Après `used_at` ou `expires_at`, le haché du jeton d'invitation ne sert plus à l'authentification. Faut-il conserver la ligne comme trace ? Décision H7 | — |
-| MIN-CONS-03 | La détection SEC-01 a besoin d'un historique d'audit d'au moins `ALERT_LOOKBACK_HOURS` + `ALERT_SPIKE_BASELINE_DAYS` (24 h + 7 jours par défaut, `backend/app/core/config.py:26`, `:43`, utilisés `backend/app/services/suspicious_activity.py:423`, `:472`). C'est un **minimum de fonctionnement**, pas une durée de conservation approuvée | RESPECTÉE (aucune purge) |
+| MIN-CONS-03 | La détection SEC-01 a besoin d'un historique d'audit d'au moins `ALERT_LOOKBACK_HOURS` + `ALERT_SPIKE_BASELINE_DAYS` (24 h + 7 jours par défaut, `backend/app/core/config.py:55`, `:72`, utilisés `backend/app/services/suspicious_activity.py:423`, `:472`). C'est un **minimum de fonctionnement**, pas une durée de conservation approuvée | RESPECTÉE (aucune purge) |
 | MIN-CONS-04 | Les points Qdrant suivent le cycle de vie du document source (MIN-QDR-05) | APPLICABLE |
 
 ### 7.3 Durées non définies (décision H7)
@@ -337,8 +346,10 @@ périmètre et attend un composant dans un autre.
 
 ## 13. Avancement (mise à jour SEC-02 T6, 2026-11-02)
 
-Les modules de US 07 T3 à T5 existent et sont testés, mais **aucune route ne les
-appelle** : rien de ce qui suit ne s'applique encore à un parcours utilisateur réel.
+Les modules de US 07 T3 à T5 existent et sont testés. À la date de cette mise à
+jour, aucune route ne les appelait ; depuis, la route RAG utilise T3 et T4 (§ 13.1),
+la passerelle T5 n'étant toujours appelée par aucune route. Rien de ce qui suit ne
+s'applique encore à un parcours utilisateur réel.
 
 - **« RESPECTÉE (module testé) »** signifie que la règle est appliquée par
   `pseudonymization.py` (T3), `rag_context.py` (T4) ou `llm_gateway.py` (T5) et
@@ -359,3 +370,41 @@ appelle** : rien de ce qui suit ne s'applique encore à un parcours utilisateur 
 
 Résultats détaillés : `docs/SEC-02-rapport-tests-securite.md` et
 `docs/SEC-02-matrice-des-droits.md` § 5.5.
+
+### 13.1 Intégration de l'agent RAG (branche `temgoua_feat/auth-user-access-audit`)
+
+Constaté dans le code ; les statuts des règles du § 6 ne sont **pas** réévalués un
+par un par cette mise à jour.
+
+- **Routes** : `POST /rag/chat` et `POST /rag/chat/stream`
+  (`backend/app/api/rag.py`). Désactivées par défaut (`RAG_ENABLED=false`,
+  réponse 503) ; une fois activées, accès refusé à tous (403 audité) tant que la
+  table département → couche est vide (H10, non décidée ; H11 et H4 non décidées).
+- **Fournisseur (H1, ouverte)** : Groq via `ChatGroq` est le seul fournisseur du
+  code, sans repli ; il n'est construit ni appelé sans `ALLOW_EXTERNAL_LLM=true`
+  (faux par défaut). La conservation des prompts par le fournisseur (MIN-LLM-11,
+  H7) reste non définie.
+- **Chemin des appels** : un contexte de requête par question
+  (`backend/app/services/llm_request.py`) et les adaptateurs
+  (`Agentic_RAG/llm_adapters.py`) pour les quatre types d'appel (étape de l'agent,
+  reformulation, self-query, fusion) ; la passerelle T5 (`llm_gateway.ask`) n'est
+  pas utilisée.
+- **Protection** : masquage (email, IBAN, carte, téléphone) de tout texte envoyé
+  (T3) et restauration limitée aux jetons envoyés. Aucune liste de valeurs connues
+  n'est fournie par le RAG : **les noms de clients ne sont pas pseudonymisés**
+  (MIN-LLM-05 seulement partielle).
+- **Minimisation (T4)** : le contexte des recherches passe par
+  `rag_context.build_context` (couche autorisée, note C3 exclue, 5 extraits, 8 000
+  caractères, seules `source` et `page` transmises) ; filtre de couche aussi dans la
+  requête Qdrant (MIN-LLM-01, MIN-QDR-04), revérifié après la récupération.
+- **Limites** : 12 appels au fournisseur par question, 32 000 caractères par appel,
+  30 s par appel (valeurs par défaut de la configuration ; H6 non décidée).
+- **Journalisation** : un événement `LLM_CALL` par appel (`provider_call`), sans
+  contenu, y compris en cas d'erreur, de délai dépassé ou de limite atteinte. Les
+  actions de la mémoire de l'agent ne sont pas journalisées.
+- **Limites connues** : streaming non progressif (réponse émise en un seul
+  fragment, après restauration) ; historique et mémoire de l'agent conservés en
+  mémoire du processus, la mémoire à long terme sans masquage.
+- Tests : `backend/tests/test_rag_access.py`, `test_rag_audit.py`,
+  `test_rag_llm_adapters.py`, `test_main_rag.py` ; détail dans
+  `docs/SEC-02-matrice-des-droits.md` § 5.6.

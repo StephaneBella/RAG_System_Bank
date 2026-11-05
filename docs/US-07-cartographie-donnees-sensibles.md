@@ -11,6 +11,18 @@ interne).
 > projet.** Aucun prompt n'est construit et aucun chunk n'est transmis à un
 > fournisseur de LLM. Les traitements « avant LLM » décrits ci-dessous sont des
 > **exigences** pour T3 à T5, pas des protections en place.
+>
+> **Mise à jour (branche `temgoua_feat/auth-user-access-audit`) :** un agent RAG
+> est désormais présent dans le code, avec Groq (`ChatGroq`) pour seul fournisseur
+> (§ 4.8). Il est **désactivé par défaut**, n'appelle Groq qu'avec
+> `ALLOW_EXTERNAL_LLM=true` (décision H1 ouverte) et **refuse tous les
+> utilisateurs** tant que la correspondance département → couche (H10) n'est pas
+> décidée. Aucune donnée n'est donc transmise à un fournisseur en dehors des
+> tests. Les classifications et les décisions de ce document restent valables.
+> Les §§ 6 et 7 sont un état historique arrêté au 2026-11-02 : leurs statuts et
+> constats ne sont pas réévalués dans cette mise à jour. Pour l'état actuel de
+> l'implémentation de la récupération (retrieval) et du filtrage par couche, se
+> référer au § 4.8.
 
 ## 1. Périmètre et sources
 
@@ -105,11 +117,11 @@ Table `audit_logs` (`backend/app/models/audit_log.py`), format détaillé dans
 
 | Donnée | Emplacement réel | Classif. | Risques | Traitement avant LLM |
 |---|---|---|---|---|
-| `user_id` et email (par jointure) | `backend/app/models/audit_log.py:62` ; email exposé en API et CSV `backend/app/api/routes/audit.py:27-38` | C2 | Profilage de l'activité d'un employé | Exclusion |
-| Adresse IP | `backend/app/models/audit_log.py:92` ; capture `backend/app/api/dependencies.py:37` | C2 | Donnée personnelle, localisation | Exclusion |
-| Départements de l'acteur et de la ressource | `backend/app/models/audit_log.py:98`, `:104` | C1 | Faible | Exclusion |
-| `duration_ms`, horodatage, action, résultat, `resource_id` | `backend/app/models/audit_log.py:60-117` | C1 | Reconstitution de l'activité | Exclusion |
-| `details` (`reason`, `document_ids`) | `backend/app/models/audit_log.py:114` ; construction `backend/app/services/audit.py:31-37` | C1 | Faible : énumération fermée et entiers uniquement | Exclusion |
+| `user_id` et email (par jointure) | `backend/app/models/audit_log.py:64` ; email exposé en API et CSV `backend/app/api/routes/audit.py:27-38` | C2 | Profilage de l'activité d'un employé | Exclusion |
+| Adresse IP | `backend/app/models/audit_log.py:94` ; capture `backend/app/api/dependencies.py:37` | C2 | Donnée personnelle, localisation | Exclusion |
+| Départements de l'acteur et de la ressource | `backend/app/models/audit_log.py:100`, `:106` | C1 | Faible | Exclusion |
+| `duration_ms`, horodatage, action, résultat, `resource_id` | `backend/app/models/audit_log.py:62-119` | C1 | Reconstitution de l'activité | Exclusion |
+| `details` (`reason`, `document_ids`) | `backend/app/models/audit_log.py:116` ; construction `backend/app/services/audit.py:176-183` | C1 | Faible : énumération fermée et entiers uniquement | Exclusion |
 | Alertes de détection (email, IP) | `backend/app/schemas/security_alert.py:23-36` | C2 | Idem email / IP | Exclusion |
 
 Accès : lecture, export et alertes réservés à `ADMIN`
@@ -120,10 +132,10 @@ d'entrer dans un prompt : **exclusion totale**.
 
 | Donnée | Emplacement réel | Classif. | Risques | Traitement avant LLM |
 |---|---|---|---|---|
-| `JWT_SECRET_KEY` | Lu `backend/app/core/config.py:15` ; valeur dans `backend/.env` | C3 | Forge de jetons pour n'importe quel compte | Exclusion absolue |
-| Mot de passe de la base (dans `DATABASE_URL`) | `backend/app/core/config.py:13` ; valeur dans `backend/.env` | C3 | Accès complet à la base | Exclusion absolue |
-| `SEED_ADMIN_PASSWORD` | `backend/app/core/config.py:23` ; utilisé `backend/app/db/seed.py` | C3 | Compte administrateur initial | Exclusion absolue |
-| `QDRANT_URL`, `QDRANT_API_KEY` | Lus `backend/app/services/Agentic_RAG/Data_preparation/storing.py:18-20` | C3 | Lecture ou altération du corpus vectorisé | Exclusion absolue |
+| `JWT_SECRET_KEY` | Lu `backend/app/core/config.py:44` ; valeur dans `backend/.env` | C3 | Forge de jetons pour n'importe quel compte | Exclusion absolue |
+| Mot de passe de la base (dans `DATABASE_URL`) | `backend/app/core/config.py:42` ; valeur dans `backend/.env` | C3 | Accès complet à la base | Exclusion absolue |
+| `SEED_ADMIN_PASSWORD` | `backend/app/core/config.py:52` ; utilisé `backend/app/db/seed.py` | C3 | Compte administrateur initial | Exclusion absolue |
+| `QDRANT_URL`, `QDRANT_API_KEY` | Lus `backend/app/services/Agentic_RAG/Data_preparation/storing.py:22-24` | C3 | Lecture ou altération du corpus vectorisé | Exclusion absolue |
 
 `backend/.env` est ignoré par Git (`.gitignore:13-17`) et seules les clés
 `APP_ENV`, `APP_NAME`, `DATABASE_URL`, `JWT_SECRET_KEY` y sont définies.
@@ -229,18 +241,18 @@ récupération qui lirait directement le payload Qdrant l'ignorerait (§ 4.6).
 ### 4.6 Données stockées dans Qdrant
 
 Chaque point écrit par `store_nodes`
-(`backend/app/services/Agentic_RAG/Data_preparation/storing.py:63-68`) contient :
+(`backend/app/services/Agentic_RAG/Data_preparation/storing.py:72-82`) contient :
 
 | Donnée | Emplacement | Classif. | Risques | Traitement avant LLM |
 |---|---|---|---|---|
-| `text` : texte **intégral** du chunk, documents privés compris | `storing.py:66` | Celle du document (C0 à C3) | Copie du corpus confidentiel hors de l'application ; dépend de l'hébergement de Qdrant | Selon § 4.4, après filtrage de couche (I-5) et minimisation (T4) |
-| Métadonnées : `source`, `page`, `doc_type`, `business_layer`, `chunk_index` | `storing.py:66` (`**n.metadata`) | C1 | Faible | Selon § 4.5 |
-| `file_path` (chemin absolu) | `storing.py:66` | C2 | Révèle l'arborescence du serveur ; transmis tel quel si le payload est relu sans filtrage | Exclusion |
+| `text` : texte **intégral** du chunk, documents privés compris | `storing.py:75-79` | Celle du document (C0 à C3) | Copie du corpus confidentiel hors de l'application ; dépend de l'hébergement de Qdrant | Selon § 4.4, après filtrage de couche (I-5) et minimisation (T4) |
+| Métadonnées : `source`, `page`, `doc_type`, `business_layer`, `chunk_index` | `storing.py:75-79` (`**n.metadata`) | C1 | Faible | Selon § 4.5 |
+| `file_path` (chemin absolu) | `storing.py:75-79` | C2 | Révèle l'arborescence du serveur ; transmis tel quel si le payload est relu sans filtrage | Exclusion |
 | Identifiant du point (UUID v5 dérivé du texte) | `chunking.py:47` | C1 | Faible | Exclusion |
-| Vecteur d'embedding | `storing.py:65` | C2 | Inversion partielle possible du texte | Exclusion |
+| Vecteur d'embedding | `storing.py:74` | C2 | Inversion partielle possible du texte | Exclusion |
 
 Index de payload sur `source`, `doc_type`, `business_layer`, `page`
-(`storing.py:37-43`), prévus pour le filtrage par couche **mais utilisés par
+(`storing.py:42-52`), prévus pour le filtrage par couche **mais utilisés par
 aucun code à ce jour**.
 
 Le constat sur `file_path` est déjà documenté dans
@@ -276,15 +288,43 @@ contient aucun appel à un fournisseur de LLM.
 
 ### 4.8 Données susceptibles d'être transmises à un fournisseur de LLM
 
-**État réel : aucune.**
+**État réel : aucune donnée transmise en dehors des tests** (RAG désactivé par
+défaut, fermé à tous les utilisateurs tant que H10 n'est pas décidée).
 
-- `backend/app/services/Agentic_RAG/rag_agent.py`, `retriever_tools.py` et
-  `augmentation_tool.py` sont **vides (0 ligne)**.
-- Aucun SDK de LLM n'est présent dans le code ni dans
-  `backend/pyproject.toml`. Aucune route de chat n'existe.
-- `llama_index`, `qdrant_client` et `python-dotenv` ne sont pas déclarés dans
-  les dépendances du backend (`backend/pyproject.toml`) : le pipeline de
-  préparation ne s'exécute pas dans l'environnement du backend.
+État du code (mise à jour, la version du 2026-11-02 constatait des modules vides) :
+
+- L'agent RAG est implémenté dans `backend/app/services/Agentic_RAG/`
+  (`rag_agent.py`, `retriever_tools.py`, `augmentation_tool.py`, `search_tools.py`,
+  `memory_tools.py`, `llm_adapters.py`) et exposé par `POST /rag/chat` et
+  `POST /rag/chat/stream` (`backend/app/api/rag.py`).
+- Seul fournisseur : Groq, via `ChatGroq` (`langchain-groq`), utilisable seulement
+  avec `ALLOW_EXTERNAL_LLM=true`. Le SDK et la pile RAG (`llama_index`,
+  `qdrant_client`, `python-dotenv`…) sont déclarés dans le groupe de dépendances
+  optionnel `rag` de `backend/pyproject.toml`, non installé par défaut.
+
+Si le RAG était activé pour un utilisateur autorisé, chaque appel au fournisseur
+passerait par le contexte de requête (`backend/app/services/llm_request.py`) et
+les adaptateurs (`Agentic_RAG/llm_adapters.py`). Mise en œuvre constatée dans le
+code, ligne par ligne du tableau ci-dessous :
+
+- **Question** : masquage (email, IBAN, carte, téléphone) avant l'envoi. La
+  pseudonymisation des noms et identifiants n'a lieu que pour des **valeurs
+  connues** ; le RAG n'en fournit aucune : **les noms de clients ne sont pas
+  pseudonymisés**.
+- **Chunks** : filtre d'accès dans la requête Qdrant, revérifié après la
+  récupération, puis `rag_context.build_context` (T4) : couche autorisée, note C3
+  exclue, doublons, nombre d'extraits (5) et budget (8 000 caractères).
+- **Métadonnées** : seules `source` et `page` sont transmises.
+- **Identité de l'utilisateur** : absente du prompt ; elle sert au filtrage côté
+  serveur.
+- **Historique de conversation** : il existe désormais. Il est conservé en mémoire
+  du processus, par utilisateur et par session, et protégé à chaque envoi. La
+  mémoire à long terme de l'agent (`memory_save`) conserve en mémoire du
+  processus, **sans masquage**, les informations que l'utilisateur demande de
+  retenir ; elles sont protégées seulement au moment de l'envoi. À cartographier
+  plus précisément (catégorie non classée).
+- **Secrets, jetons, journal d'audit** : jamais envoyés. Le journal ne reçoit
+  qu'un compte rendu sans contenu par appel.
 
 **Ce qu'une future passerelle (I-2 à I-4, US 07 T5) transmettrait**, et le
 traitement exigé :
@@ -295,7 +335,7 @@ traitement exigé :
 | Texte des chunks récupérés | Payload Qdrant `text` | Autorisation explicite, limitée aux chunks de la couche de l'utilisateur (I-5) et au strict nécessaire (T4) ; C3 exclu par défaut |
 | Métadonnées des chunks | Payload Qdrant | `source`, `page` : autorisation explicite ; `file_path`, `chunk_index`, identifiant de point : exclusion |
 | Identité de l'utilisateur (email, rôle, département) | Session | Exclusion ; la couche sert au filtrage côté serveur et n'a pas à figurer dans le prompt |
-| Historique de conversation | Inexistant à ce jour | À cartographier quand il existera |
+| Historique de conversation | Mémoire de l'agent RAG (voir ci-dessus) | À cartographier : catégorie non classée, minimisation à décider |
 | Secrets, jetons, journal d'audit | — | Exclusion absolue |
 
 ## 5. Catégories prospectives (absentes aujourd'hui)
@@ -324,21 +364,21 @@ données.
 | Jeton d'invitation stocké haché (SHA-256), usage unique | `backend/app/services/invitation_service.py:41`, `:61` | `backend/tests/test_invitations.py:73`, `:119`, `:128` |
 | JWT signé, révocable (`jti`), sujet = identifiant numérique | `backend/app/core/security.py:21-43`, `backend/app/api/routes/auth.py:59-60` | `backend/tests/test_auth.py:178`, `:226`, `:234` |
 | Secrets hors Git | `.gitignore:13-17` | — |
-| Aucun jeton ni secret dans le journal ; `details` limité à une énumération et des entiers | `backend/app/services/audit.py:31-37` | `backend/tests/test_audit.py:390`, `:594` |
+| Aucun jeton ni secret dans le journal ; `details` limité à une énumération et des entiers | `backend/app/services/audit.py:176-183` | `backend/tests/test_audit.py:390`, `:594` |
 | Aucune donnée secrète dans les alertes | `backend/app/schemas/security_alert.py:24` | `backend/tests/test_suspicious_activity.py:648` |
 | Cloisonnement strict par département pour la bibliothèque | `backend/app/api/routes/documents.py:193`, `:260` | `backend/tests/test_documents.py:186`, `:202` |
 | Étiquetage obligatoire de chaque PDF du corpus (refus sinon) | `ingestion.py:27-56`, `:64-68` | `backend/tests/test_rag_ingestion_security.py:107`, `:115`, `:125`, `:131` |
 | `file_path` exclu de la vue LLM de llama_index | `ingestion.py:79` | `backend/tests/test_rag_ingestion_security.py:144` |
 | Métadonnées exclues des vecteurs | `ingestion.py:78` | `backend/tests/test_rag_ingestion_security.py:154` |
-| Étiquettes de couche indexées dans Qdrant | `storing.py:37-43` | `backend/tests/test_rag_ingestion_security.py:197` |
+| Étiquettes de couche indexées dans Qdrant | `storing.py:42-52` | `backend/tests/test_rag_ingestion_security.py:197` |
 | Embeddings calculés localement | `vectorisation.py:6-14` | — |
 
 ### 6.2 Protections partielles ou insuffisantes
 
 | Constat | Pourquoi c'est insuffisant | Preuve |
 |---|---|---|
-| `file_path` exclu de la vue LLM mais stocké dans Qdrant | L'exclusion ne vaut que si la récupération passe par le rendu llama_index | `storing.py:66` ; `backend/tests/test_rag_ingestion_security.py:205` |
-| Étiquettes de couche indexées | Aucun filtre ne les utilise : aucun module de récupération n'existe | `storing.py:37-43` ; `retriever_tools.py` vide |
+| `file_path` exclu de la vue LLM mais stocké dans Qdrant | L'exclusion ne vaut que si la récupération passe par le rendu llama_index | `storing.py:75-79` ; `backend/tests/test_rag_ingestion_security.py:205` |
+| Étiquettes de couche indexées | Aucun filtre ne les utilise : aucun module de récupération n'existe | `storing.py:42-52` ; `retriever_tools.py` vide |
 | Étiquetage par document | Ne permet pas de restreindre une section (ex. § 3.1 LBC-FT) | `chunking.py:37-47` |
 | JWT dans `localStorage` | Exposé à une faille XSS | `frontend/src/api/tokenStore.ts:8`, `:18` |
 
