@@ -39,6 +39,25 @@ jobs:
           JWT_SECRET_KEY: "ci-test-secret-key-not-for-production"
         run: uv run pytest
 
+      # The RAG security tests (SEC-01, SEC-02, US-07) are skipped above: they need the
+      # optional "rag" dependency group. Install it from the lock and fail if it cannot
+      # be imported, so that these tests can never be skipped silently here.
+      - name: Install RAG dependencies
+        run: |
+          uv sync --locked --group rag
+          uv run --locked --group rag python -c "import langchain_classic, llama_index.core, qdrant_client"
+
+      - name: Run RAG security tests
+        env:
+          DATABASE_URL: "sqlite:///./test.db"
+          JWT_SECRET_KEY: "ci-test-secret-key-not-for-production"
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: >-
+          uv run --locked --group rag pytest
+          tests/test_rag_access.py tests/test_rag_audit.py
+          tests/test_rag_llm_adapters.py tests/test_main_rag.py
+
   frontend:
     runs-on: ubuntu-latest
 
