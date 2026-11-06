@@ -69,7 +69,7 @@ def store_nodes(
             vector=v,
             payload={
                 "text": n.get_content(metadata_mode=MetadataMode.NONE),
-                "metadata": dict(n.metadate), # copie imbriquée : lue par LangChain / self-query
+                "metadata": dict(n.metadata),  # copie imbriquée : lue par LangChain / self-query
                 **n.metadata,       # copie à plat : lue par LlamaIndex / filtres RBAC
             },
             
@@ -79,4 +79,4 @@ def store_nodes(
     for i in range(0, len(points), batch_size):
         client.upsert(collection_name=collection, points=points[i : i + batch_size], wait=True)
         logger.info("%d point(s) écrits dans '%s'", len(points), collection)
-        return len(points)
+    return len(points)

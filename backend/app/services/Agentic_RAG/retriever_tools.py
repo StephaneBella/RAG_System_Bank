@@ -32,7 +32,7 @@ from llama_index.core.base.base_retriever import BaseRetriever as LIRetriever
 from llama_index.core.retrievers import QueryFusionRetriever, VectorIndexRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.schema import MetadataMode, NodeWithScore, QueryBundle, TextNode
-from llama_index.llms.anthropic import Anthropic as LlamaAnthropic
+from llama_index.llms.groq import Groq as LlamaGroq
 from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.vector_stores.qdrant import QdrantVectorStore as LIQdrantVectorStore
 from qdrant_client import models as qm
@@ -46,17 +46,20 @@ except ImportError:  # LangChain < 1.0
     from langchain.retrievers.multi_query import MultiQueryRetriever
     from langchain.retrievers.self_query.base import SelfQueryRetriever
 
-from Data_preparation.ingestion import (
+from app.services.Agentic_RAG.Data_preparation.ingestion import (
     CONFORMITE, CREDIT_RISQUES, DIRECTION_GENERALE, FRONT_OFFICE, PRIVE, PUBLIC,
 )
-from Data_preparation.storing import COLLECTION_NAME, get_qdrant_client
-from Data_preparation.vectorisation import get_embed_model
+from app.services.Agentic_RAG.Data_preparation.storing import COLLECTION_NAME, get_qdrant_client
+from app.services.Agentic_RAG.Data_preparation.vectorisation import get_embed_model
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 audit = logging.getLogger("rag.audit")
 
-LLM_MODEL = os.getenv("LLM_MODEL", "groq:openai-gpt-oss-120b")
+
+def llm_model_name() -> str:
+    """Nom du modèle Groq, sans le préfixe `groq:` éventuel."""
+    return os.getenv("LLM_MODEL", "openai/gpt-oss-120b").removeprefix("groq:")
 
 
 # =====================================================================
@@ -168,13 +171,13 @@ def _client():
 
 
 @lru_cache(maxsize=1)
-def _llama_llm() -> LlamaAnthropic:
-    return LlamaAnthropic(model=LLM_MODEL, temperature=0.0, max_tokens=1024)
+def _llama_llm() -> LlamaGroq:
+    return LlamaGroq(model=llm_model_name(), temperature=0.0, max_tokens=1024)
 
 
 @lru_cache(maxsize=1)
 def _lc_llm() -> ChatGroq:
-    return ChatGroq(model=LLM_MODEL, temperature=0, max_tokens=1024)
+    return ChatGroq(model=llm_model_name(), temperature=0, max_tokens=1024)
 
 
 class LlamaIndexEmbeddings(Embeddings):

@@ -31,15 +31,18 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
-from memory_tools import MEMORY_TOOLS, build_memory_store
-from system_prompt import SYSTEM_PROMPT
-from retriever_tools import UserContext, log_event, resolve_scope, warmup
-from search_tools import SEARCH_TOOLS
+from app.services.Agentic_RAG.memory_tools import MEMORY_TOOLS, build_memory_store
+from app.services.Agentic_RAG.system_prompt import SYSTEM_PROMPT
+from app.services.Agentic_RAG.retriever_tools import UserContext, log_event, resolve_scope, warmup
+from app.services.Agentic_RAG.search_tools import SEARCH_TOOLS
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-LLM_MODEL = os.getenv("LLM_MODEL", "groq:openai-gpt-oss-102b")
+
+def llm_model_name() -> str:
+    """Nom du modèle Groq, sans le préfixe `groq:` éventuel."""
+    return os.getenv("LLM_MODEL", "openai/gpt-oss-120b").removeprefix("groq:")
 TOOLS = SEARCH_TOOLS + MEMORY_TOOLS
 
 MAX_QUESTION_CHARS = 4000
@@ -128,7 +131,7 @@ class RagService:
     def _init_blocking(self) -> None:
         warmup()  # modèle d'embedding + Qdrant : échec rapide si la config est mauvaise
         self.agent = create_agent(
-            model=ChatGroq(model=LLM_MODEL, temperature=0, max_tokens=2048),
+            model=ChatGroq(model=llm_model_name(), temperature=0, max_tokens=2048),
             tools=TOOLS,
             system_prompt=SYSTEM_PROMPT,
             context_schema=UserContext,

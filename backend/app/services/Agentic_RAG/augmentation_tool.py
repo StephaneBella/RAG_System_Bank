@@ -12,7 +12,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from retriever_tools import RetrievedChunk
+from app.services.Agentic_RAG.retriever_tools import RetrievedChunk
 
 logger = logging.getLogger(__name__)
 

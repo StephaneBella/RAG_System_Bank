@@ -19,10 +19,10 @@ from pydantic import BaseModel, Field
 # À ADAPTER : votre dépendance d'authentification existante (renvoie l'utilisateur courant)
 from .dependencies import get_current_user
 
-from services.Agentic_RAG.rag_agent import (
+from app.services.Agentic_RAG.rag_agent import (
     AccessDenied, InvalidRequest, RagError, RagService, RagTimeout, setup_audit_logging,
 )
-from services.Agentic_RAG.retriever_tools import UserContext
+from app.services.Agentic_RAG.retriever_tools import UserContext
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +52,30 @@ def get_rag_service() -> RagService:
 # ---------------------------------------------------------------------
 # Identité : utilisateur authentifié -> UserContext du RAG
 # ---------------------------------------------------------------------
-# À ADAPTER : correspondance entre vos rôles applicatifs et les clés de ROLE_POLICIES
-# (services/retriever_tools.py). Un rôle absent de ROLE_POLICIES est refusé (403).
-RAG_ROLE_MAP: dict[str, str] = {
-    # "chargé de clientèle": "charge_clientele",
-    # "analyste crédit": "credit_risques",
+# Correspondance entre le département applicatif et les clés de ROLE_POLICIES
+# (app/services/Agentic_RAG/retriever_tools.py). Un utilisateur hors de ces
+# départements est refusé (403) par le RAG (deny by default).
+RAG_DEPARTMENT_MAP: dict[str, str] = {
+    "front office": "charge_clientele",
+    "credit & risques": "credit_risques",
+    "direction conformite": "conformite",
+    "direction generale": "direction_generale",
 }
 
 
+def _normalize(value: str) -> str:
+    return " ".join(str(value).replace("é", "e").replace("è", "e").replace("ê", "e").lower().split())
+
+
 def get_rag_user(current_user=Depends(get_current_user)) -> UserContext:
-    """Suppose que l'objet utilisateur expose `.id` et `.role` (str ou Enum)."""
-    role = getattr(current_user.role, "value", current_user.role)
-    role = str(role)
-    return UserContext(user_id=str(current_user.id), role=RAG_ROLE_MAP.get(role, role))
+    """Mappe l'utilisateur authentifié (rôle + département) vers un UserContext RAG."""
+    department = getattr(current_user, "department", None)
+    department_name = getattr(department, "name", None)
+    role = RAG_DEPARTMENT_MAP.get(_normalize(department_name or ""))
+    if role is None:
+        role = getattr(current_user.role, "value", current_user.role)
+        role = str(role)
+    return UserContext(user_id=str(current_user.id), role=role)
 
 
 # ---------------------------------------------------------------------

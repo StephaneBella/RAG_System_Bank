@@ -24,6 +24,19 @@ function isAuthRequest(url?: string): boolean {
   return url.includes('/auth/login') || url.includes('/auth/logout');
 }
 
+/** Clears the session and notifies `AuthProvider` (used by axios and fetch-based streams). */
+export function triggerUnauthorized(): void {
+  clearToken();
+  // Single-flight: a burst of parallel 401s must trigger one logout.
+  if (!isHandlingUnauthorized) {
+    isHandlingUnauthorized = true;
+    unauthorizedHandler?.();
+    window.setTimeout(() => {
+      isHandlingUnauthorized = false;
+    }, 0);
+  }
+}
+
 apiClient.interceptors.request.use((config) => {
   const token = getToken();
   if (token) {
@@ -37,15 +50,7 @@ apiClient.interceptors.response.use(
   (error: AxiosError) => {
     const status = error.response?.status;
     if (status === 401 && !isAuthRequest(error.config?.url)) {
-      clearToken();
-      // Single-flight: a burst of parallel 401s must trigger one logout.
-      if (!isHandlingUnauthorized) {
-        isHandlingUnauthorized = true;
-        unauthorizedHandler?.();
-        window.setTimeout(() => {
-          isHandlingUnauthorized = false;
-        }, 0);
-      }
+      triggerUnauthorized();
     }
     return Promise.reject(error);
   },

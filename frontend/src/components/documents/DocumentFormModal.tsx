@@ -52,7 +52,7 @@ export function DocumentFormModal({
     const nextErrors: Record<string, string> = {};
     if (!title.trim()) nextErrors.title = t('admin.documents.requiredTitle');
     if (!departmentId) nextErrors.department = t('admin.documents.requiredDepartment');
-    if (!isEdit && !file) nextErrors.file = t('admin.documents.requiredFile');
+    if (!file) nextErrors.file = t('admin.documents.requiredFile');
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
@@ -129,7 +129,7 @@ export function DocumentFormModal({
 
         <div className="flex flex-col gap-1.5">
           <span className="font-label-md text-label-md text-on-surface">
-            {t('admin.documents.formFile')} {!isEdit && '*'}
+            {t('admin.documents.formFile')} *
           </span>
           <FileDropzone
             file={file}

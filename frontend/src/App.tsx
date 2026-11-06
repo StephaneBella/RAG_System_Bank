@@ -4,6 +4,7 @@ import { FullPageLoader } from '@/components/layout/FullPageLoader';
 import { AdminLayout } from '@/components/layout/AdminLayout';
 import { landingPathFor, useAuth } from '@/context/AuthContext';
 import { AcceptInvitationPage } from '@/pages/AcceptInvitationPage';
+import { ChatPage } from '@/pages/ChatPage';
 import { DocumentDetailPage } from '@/pages/DocumentDetailPage';
 import { ForbiddenPage } from '@/pages/ForbiddenPage';
 import { LibraryPage } from '@/pages/LibraryPage';
@@ -33,6 +34,14 @@ export function App(): JSX.Element {
           element={
             <ProtectedRoute>
               <LibraryPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/chat"
+          element={
+            <ProtectedRoute>
+              <ChatPage />
             </ProtectedRoute>
           }
         />

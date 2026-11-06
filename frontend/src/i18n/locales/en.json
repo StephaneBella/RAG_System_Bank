@@ -58,11 +58,10 @@
     "private": "Private"
   },
   "departments": {
-    "Direction Générale": "General Management",
-    "Conformité & Risques": "Compliance & Risk",
-    "Direction Juridique": "Legal Affairs",
-    "Finances & Comptabilité": "Finance & Accounting",
-    "Ressources Humaines": "Human Resources"
+    "Direction Generale": "General Management",
+    "Credit & Risques": "Credit & Risk",
+    "Front Office": "Front Office",
+    "Direction Conformite": "Compliance Department"
   },
   "auditActions": {
     "LOGIN": "Sign in",
@@ -112,7 +111,8 @@
     "users": "Users",
     "audit": "Audit log",
     "library": "Library",
-    "backToLibrary": "Back to library"
+    "backToLibrary": "Back to library",
+    "assistant": "Assistant"
   },
   "library": {
     "title": "My documents",
@@ -124,6 +124,31 @@
     "noResultsHint": "No document matches your search criteria.",
     "resetFilters": "Reset filters",
     "readOnlyBody": "This document can be viewed read-only in your secure workspace."
+  },
+  "chat": {
+    "title": "Document assistant",
+    "subtitle": "Ask questions about the documents your department can access.",
+    "conversation": "Conversation with the document assistant",
+    "newChat": "New conversation",
+    "placeholder": "Ask a question about the documents…",
+    "send": "Send",
+    "stop": "Stop generating",
+    "sources": "Sources",
+    "page": "p. {{page}}",
+    "moreSources": "+{{count}} more source",
+    "moreSources_plural": "+{{count}} more sources",
+    "emptyTitle": "How can I help?",
+    "emptyHint": "I answer only from the official documents available to your department. Every answer cites its sources.",
+    "thinking": "Searching the documents…",
+    "errorTitle": "Unable to get an answer",
+    "retry": "Retry",
+    "accessDenied": "Your department is not enabled for the document assistant.",
+    "disclaimer": "Answers are generated from official documents. Always verify the cited source.",
+    "starter1": "What are the main credit risk management rules?",
+    "starter2": "What does the Front Office procedure require from account managers?",
+    "starter3": "What are our anti-money-laundering and compliance obligations?",
+    "starter4": "What is the role and scope of the General Management?",
+    "opensSource": "Opens {{ source }}"
   },
   "document": {
     "format": "Format",
@@ -241,9 +266,9 @@
       "last7": "Last 7 days",
       "last30": "Last 30 days",
       "thisMonth": "This month",
-    "allEvents": "All events",
-    "allStatuses": "All statuses",
-    "searchUserPlaceholder": "Search by user email…",
+      "allEvents": "All events",
+      "allStatuses": "All statuses",
+      "searchUserPlaceholder": "Search by user email…",
       "columns": {
         "dateTime": "Date & Time",
         "user": "User",

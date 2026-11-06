@@ -1,4 +1,5 @@
-import { Outlet } from 'react-router-dom';
+import { Outlet, Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
 import { Icon } from '@/components/ui/Icon';
 
@@ -7,6 +8,8 @@ import { Sidebar } from './Sidebar';
 import { UserMenu } from './UserMenu';
 
 export function AdminLayout(): JSX.Element {
+  const { t } = useTranslation();
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <Sidebar />
@@ -18,6 +21,22 @@ export function AdminLayout(): JSX.Element {
             </span>
           </div>
           <div className="flex flex-1 items-center justify-end gap-3">
+            <Link
+              to="/library"
+              title={t('nav.library')}
+              aria-label={t('nav.library')}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary"
+            >
+              <Icon name="folder_open" className="text-[20px]" />
+            </Link>
+            <Link
+              to="/chat"
+              title={t('nav.assistant')}
+              aria-label={t('nav.assistant')}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary"
+            >
+              <Icon name="smart_toy" className="text-[20px]" />
+            </Link>
             <LanguageSwitcher />
             <UserMenu />
           </div>

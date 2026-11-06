@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import copyfileobj, move
@@ -44,11 +45,39 @@ class StoredDocument:
         self.updated_at = updated_at
 
 
-def sanitize_department_token(name: str) -> str:
-    token = "".join("_" if ch in _DEPARTMENT_UNSAFE_CHARS else ch for ch in name.lower()).replace(
-        " ", "_"
+def _fold(text: str) -> str:
+    """NFKD normalization then strip diacritics, lower‑case."""
+    return (
+        unicodedata.normalize("NFKD", text)
+        .encode("ascii", "ignore")
+        .decode()
+        .lower()
     )
-    return token.strip("_")
+
+
+_VISIBILITY_ALIASES = {
+    "public": "public",
+    "publique": "public",
+    "pub": "public",
+    "private": "private",
+    "prive": "private",
+    "privee": "private",
+    "priv": "private",
+}
+
+
+def normalize_visibility(raw: str) -> str | None:
+    """Map a visibility token (any case/accent) to ``public`` or ``private``."""
+    return _VISIBILITY_ALIASES.get(_fold(raw).strip())
+
+
+def sanitize_department_token(name: str) -> str:
+    token = _fold(name)
+    token = re.sub(r"[\s\-]+", "_", token)
+    token = "".join(
+        "_" if ch in _DEPARTMENT_UNSAFE_CHARS or ord(ch) < 32 else ch for ch in token
+    )
+    return re.sub(r"_+", "_", token).strip("_")
 
 
 def humanize_title(raw: str) -> str:
@@ -71,29 +100,68 @@ def build_stored_name(visibility: str, department_token: str, title: str, extens
     return f"{visibility}__{department_token}__{sanitize_title(title)}{extension.lower()}"
 
 
+def _infer_legacy_department(base: str) -> str | None:
+    """Map a legacy filename base (without visibility prefix) to a department token."""
+    normalized = _fold(base)
+    if any(k in normalized for k in ("credit", "risque", "risques")):
+        return "credit_&_risques"
+    if any(k in normalized for k in ("conformite", "lbc")):
+        return "direction_conformite"
+    if any(k in normalized for k in ("front_office", "gestionnaires")):
+        return "front_office"
+    if any(k in normalized for k in ("direction_generale", "strategie", "rapport_annuel")):
+        return "direction_generale"
+    return None
+
+
 def parse_stored_name(file_name: str) -> StoredDocument | None:
+    # Determine how many "__" separators are present
     parts = file_name.split("__", 2)
-    if len(parts) != 3:
+    if len(parts) == 3:
+        # 3‑part canonical format: visibility__department__title.ext
+        visibility_raw, dept_raw, base = parts
+        visibility = normalize_visibility(visibility_raw)
+        if visibility is None or not dept_raw:
+            return None
+        department_token = _fold(dept_raw)          # normalized token for matching
+        title = humanize_title(Path(base).stem)
+        extension = Path(base).suffix.lower()
+        if extension not in ALLOWED_EXTENSIONS:
+            return None
+        return StoredDocument(
+            id=0,
+            file_name=file_name,
+            visibility=visibility,
+            department_token=department_token,
+            title=title,
+            extension=extension,
+            file_path=(Path("data") / "documents" / file_name).as_posix(),
+        )
+    elif len(parts) == 2:
+        # 2‑part legacy format: visibility__title.ext  (e.g. Prive__Credit_Risques.pdf)
+        visibility_raw, base = parts
+        visibility = normalize_visibility(visibility_raw)
+        if visibility is None or not base:
+            return None
+        # Infer department from title keywords
+        department_token = _infer_legacy_department(base)
+        if department_token is None:
+            return None
+        title = humanize_title(Path(base).stem)
+        extension = Path(base).suffix.lower()
+        if extension not in ALLOWED_EXTENSIONS:
+            return None
+        return StoredDocument(
+            id=0,
+            file_name=file_name,
+            visibility=visibility,
+            department_token=department_token,
+            title=title,
+            extension=extension,
+            file_path=(Path("data") / "documents" / file_name).as_posix(),
+        )
+    else:
         return None
-
-    visibility, department_token, base = parts
-    if visibility not in ALLOWED_VISIBILITIES or not department_token:
-        return None
-
-    extension = Path(base).suffix.lower()
-    if extension not in ALLOWED_EXTENSIONS:
-        return None
-
-    title = humanize_title(Path(base).stem)
-    return StoredDocument(
-        id=0,
-        file_name=file_name,
-        visibility=visibility,
-        department_token=department_token,
-        title=title,
-        extension=extension,
-        file_path=(Path("data") / "documents" / file_name).as_posix(),
-    )
 
 
 def list_document_files() -> list[Path]:
@@ -135,15 +203,31 @@ def find_by_id(index: dict, document_id: int) -> dict | None:
 
 def sync_index_with_folder() -> dict:
     index = load_index()
-    indexed = {doc["file_name"] for doc in index["documents"]}
+    # Build a lookup of actual files keyed by lower‑cased name
+    actual_files = {p.name.lower(): p.name for p in list_document_files()}
 
-    for path in sorted(list_document_files(), key=lambda p: p.name):
-        if path.name in indexed:
-            continue
-        if parse_stored_name(path.name) is None:
-            continue
-        index["documents"].append({"id": index["next_id"], "file_name": path.name})
-        index["next_id"] += 1
+    # Keep only index entries whose file name exists (case‑insensitive) in the folder
+    kept = []
+    for entry in index["documents"]:
+        lower_name = entry["file_name"].lower()
+        actual = actual_files.get(lower_name)
+        if actual is not None:
+            # Update the stored name to the real casing if it differs
+            if entry["file_name"] != actual:
+                entry["file_name"] = actual
+            kept.append(entry)
+        # else: stale entry – drop it
+
+    index["documents"] = kept
+
+    # Add any folder files that are not already in the index
+    for lower_name, actual_name in actual_files.items():
+        if (
+            not any(doc["file_name"].lower() == lower_name for doc in index["documents"])
+            and parse_stored_name(actual_name) is not None
+        ):
+            index["documents"].append({"id": index["next_id"], "file_name": actual_name})
+            index["next_id"] += 1
 
     save_index(index)
     return index
@@ -219,7 +303,10 @@ def load_documents(index: dict) -> list[StoredDocument]:
         if parsed is None:
             continue
         path = DOCUMENTS_DIR / entry["file_name"]
-        created_at, updated_at = _file_times(path)
+        try:
+            created_at, updated_at = _file_times(path)
+        except FileNotFoundError:
+            continue
         documents.append(
             StoredDocument(
                 id=entry["id"],

@@ -58,11 +58,10 @@
     "private": "Privé"
   },
   "departments": {
-    "Direction Générale": "Direction Générale",
-    "Conformité & Risques": "Conformité & Risques",
-    "Direction Juridique": "Direction Juridique",
-    "Finances & Comptabilité": "Finances & Comptabilité",
-    "Ressources Humaines": "Ressources Humaines"
+    "Direction Generale": "Direction Générale",
+    "Credit & Risques": "Crédit & Risques",
+    "Front Office": "Front Office",
+    "Direction Conformite": "Direction Conformité"
   },
   "auditActions": {
     "LOGIN": "Connexion",
@@ -112,7 +111,8 @@
     "users": "Utilisateurs",
     "audit": "Journal d'audit",
     "library": "Bibliothèque",
-    "backToLibrary": "Retour à la bibliothèque"
+    "backToLibrary": "Retour à la bibliothèque",
+    "assistant": "Assistant"
   },
   "library": {
     "title": "Mes documents",
@@ -124,6 +124,31 @@
     "noResultsHint": "Aucun document ne correspond à vos critères de recherche.",
     "resetFilters": "Réinitialiser les filtres",
     "readOnlyBody": "Ce document est consultable en lecture seule dans votre espace sécurisé."
+  },
+  "chat": {
+    "title": "Assistant documentaire",
+    "subtitle": "Posez vos questions sur les documents auxquels votre département a accès.",
+    "conversation": "Conversation avec l'assistant documentaire",
+    "newChat": "Nouvelle conversation",
+    "placeholder": "Posez une question sur les documents…",
+    "send": "Envoyer",
+    "stop": "Arrêter la génération",
+    "sources": "Sources",
+    "page": "p. {{page}}",
+    "moreSources": "+{{count}} source supplémentaire",
+    "moreSources_plural": "+{{count}} sources supplémentaires",
+    "emptyTitle": "Comment puis-je vous aider ?",
+    "emptyHint": "Je réponds uniquement à partir des documents officiels accessibles à votre département. Chaque réponse cite ses sources.",
+    "thinking": "Recherche dans les documents…",
+    "errorTitle": "Impossible d'obtenir une réponse",
+    "retry": "Réessayer",
+    "accessDenied": "Votre département n'est pas habilité à utiliser l'assistant documentaire.",
+    "disclaimer": "Les réponses sont générées à partir des documents officiels. Vérifiez toujours la source citée.",
+    "starter1": "Quelles sont les principales règles de gestion des risques de crédit ?",
+    "starter2": "Que demande la procédure Front Office aux gestionnaires de comptes ?",
+    "starter3": "Quelles sont nos obligations en matière de conformité et de lutte anti-blanchiment ?",
+    "starter4": "Quel est le rôle et le périmètre de la Direction Générale ?",
+    "opensSource": "Ouvre la source {{ source }}"
   },
   "document": {
     "format": "Format",
@@ -241,9 +266,9 @@
       "last7": "7 derniers jours",
       "last30": "30 derniers jours",
       "thisMonth": "Ce mois-ci",
-    "allEvents": "Tous les événements",
-    "allStatuses": "Tous les statuts",
-    "searchUserPlaceholder": "Rechercher par e-mail utilisateur…",
+      "allEvents": "Tous les événements",
+      "allStatuses": "Tous les statuts",
+      "searchUserPlaceholder": "Rechercher par e-mail utilisateur…",
       "columns": {
         "dateTime": "Date & Heure",
         "user": "Utilisateur",

@@ -17,8 +17,15 @@ import { SearchInput } from '@/components/ui/SearchInput';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
-import { useCreateDocument, useDeleteDocument, useDocuments, useUpdateDocument } from '@/hooks/useDocuments';
+import {
+  useCreateDocument,
+  useDeleteDocument,
+  useDocuments,
+  useSearchDocuments,
+  useUpdateDocument,
+} from '@/hooks/useDocuments';
 import { useDepartments } from '@/hooks/useDepartments';
+import { useDebounce } from '@/hooks/useDebounce';
 import { useLocale } from '@/hooks/useLocale';
 import { formatDate } from '@/lib/utils';
 
@@ -39,27 +46,30 @@ export function AdminDocumentsPage(): JSX.Element {
   const [toDelete, setToDelete] = useState<DocumentItem | null>(null);
   const [serverError, setServerError] = useState<string | undefined>();
 
-  const documentsQuery = useDocuments({
+  const debouncedSearch = useDebounce(search, 300);
+  const query = debouncedSearch.trim();
+  const isSearching = query.length > 0;
+  const sharedParams = {
     page,
     page_size: PAGE_SIZE,
     sort_by: 'created_at',
-    order: 'desc',
-  });
+    order: 'desc' as const,
+  };
+
+  const listQuery = useDocuments(sharedParams, !isSearching);
+  const searchQuery = useSearchDocuments({ ...sharedParams, q: query }, isSearching);
   const departmentsQuery = useDepartments();
   const createMutation = useCreateDocument();
   const updateMutation = useUpdateDocument();
   const deleteMutation = useDeleteDocument();
 
   const departments = departmentsQuery.data ?? [];
+  const documentsQuery = isSearching ? searchQuery : listQuery;
   const rows = useMemo(() => {
     const all = documentsQuery.data?.items ?? [];
-    const needle = search.trim().toLowerCase();
-    return all.filter((doc) => {
-      if (departmentId && String(doc.department_id) !== departmentId) return false;
-      if (needle && !doc.title.toLowerCase().includes(needle)) return false;
-      return true;
-    });
-  }, [documentsQuery.data, search, departmentId]);
+    if (!departmentId) return all;
+    return all.filter((doc) => String(doc.department_id) === departmentId);
+  }, [documentsQuery.data, departmentId]);
 
   const clearError = () => setServerError(undefined);
 
@@ -118,13 +128,19 @@ export function AdminDocumentsPage(): JSX.Element {
       <div className="flex flex-col gap-3 sm:flex-row">
         <SearchInput
           value={search}
-          onChange={(value) => setSearch(value)}
+          onChange={(value) => {
+            setSearch(value);
+            setPage(1);
+          }}
           placeholder={t('admin.documents.searchPlaceholder')}
           ariaLabel={t('common.search')}
         />
         <Select
           value={departmentId}
-          onChange={(event) => setDepartmentId(event.target.value)}
+          onChange={(event) => {
+            setDepartmentId(event.target.value);
+            setPage(1);
+          }}
           className="sm:w-64"
           aria-label={t('admin.documents.departmentFilter')}
         >
@@ -178,6 +194,7 @@ export function AdminDocumentsPage(): JSX.Element {
                 onClick={() => {
                   setSearch('');
                   setDepartmentId('');
+                  setPage(1);
                 }}
               >
                 {t('library.resetFilters')}
