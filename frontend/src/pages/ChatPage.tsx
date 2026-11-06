@@ -1,16 +1,29 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 
 import { getApiErrorMessage } from '@/api/errors';
 import { RagApiError, streamChat } from '@/api/rag.api';
-import type { ChatSource } from '@/api/types';
+import type { ChatSource, DocumentItem } from '@/api/types';
 import { ChatMarkdown } from '@/components/chat/ChatMarkdown';
 import { AppShell } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Icon } from '@/components/ui/Icon';
 import { useAuth } from '@/context/AuthContext';
+import { useDocuments } from '@/hooks/useDocuments';
 import { cn, initials } from '@/lib/utils';
+
+const TYPEWRITER_TICK_MS = 18;
+const TYPEWRITER_CHARS_PER_TICK = 2;
 
 interface ChatMessage {
   id: string;
@@ -32,13 +45,30 @@ function nextMessageId(): string {
 function sourceLabel(source: string): string {
   const base = source.split(/[\\/]/).pop() ?? source;
   const parts = base.split('__');
-  const name = parts.length === 3 ? parts[2] : base;
+  const name = parts.length >= 2 ? parts[parts.length - 1] : base;
   return name.replace(/\.(pdf|docx)$/i, '');
 }
 
 function sourcePage(page: ChatSource['page']): string | null {
   if (page === null || page === undefined || page === '') return null;
   return String(page);
+}
+
+function normalizedFileName(value: string): string {
+  return (value.split(/[\\/]/).pop() ?? value).toLowerCase();
+}
+
+function normalizedLabel(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function StreamError({
@@ -74,7 +104,13 @@ function StreamError({
   );
 }
 
-function Sources({ sources }: { sources: ChatSource[] }): JSX.Element | null {
+function Sources({
+  sources,
+  sourceHref,
+}: {
+  sources: ChatSource[];
+  sourceHref: (source: ChatSource) => string | null;
+}): JSX.Element | null {
   const { t } = useTranslation();
   if (sources.length === 0) return null;
 
@@ -91,6 +127,8 @@ function Sources({ sources }: { sources: ChatSource[] }): JSX.Element | null {
         {visible.map((source) => {
           const page = sourcePage(source.page);
           const label = sourceLabel(source.source);
+          const href = sourceHref(source);
+          const target = href ? `${href}${page ? `?page=${encodeURIComponent(page)}` : ''}` : null;
           return (
             <li key={`${source.id}-${source.source}-${String(source.page)}`}>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -98,16 +136,17 @@ function Sources({ sources }: { sources: ChatSource[] }): JSX.Element | null {
                   className="flex-1 min-w-0 truncate font-body-sm text-body-sm font-medium text-on-surface"
                   title={source.source}
                 >
-                  <a
-                    href={`#`}
-                    className="hover:underline text-primary transition-colors"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      window.alert(t('chat.opensSource', { source: label }));
-                    }}
-                  >
-                    {label}
-                  </a>
+                  {target ? (
+                    <Link
+                      to={target}
+                      className="text-primary transition-colors hover:underline"
+                      title={t('chat.opensSource', { source: label })}
+                    >
+                      {label}
+                    </Link>
+                  ) : (
+                    label
+                  )}
                 </span>
                 {page && (
                   <span className="rounded bg-surface-container px-1.5 py-0.5 font-body-sm text-body-sm text-on-surface-variant">
@@ -141,6 +180,33 @@ function Sources({ sources }: { sources: ChatSource[] }): JSX.Element | null {
 export function ChatPage(): JSX.Element {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const { data: documentsPage } = useDocuments({ page: 1, page_size: 100 });
+
+  const documentsByFileName = useMemo(() => {
+    const map = new Map<string, DocumentItem>();
+    for (const document of documentsPage?.items ?? []) {
+      map.set(normalizedFileName(document.file_path), document);
+    }
+    return map;
+  }, [documentsPage?.items]);
+
+  const documentsByTitle = useMemo(() => {
+    const map = new Map<string, DocumentItem>();
+    for (const document of documentsPage?.items ?? []) {
+      map.set(normalizedLabel(document.title), document);
+    }
+    return map;
+  }, [documentsPage?.items]);
+
+  const sourceHref = useCallback(
+    (source: ChatSource): string | null => {
+      const document =
+        documentsByFileName.get(normalizedFileName(source.source)) ??
+        documentsByTitle.get(normalizedLabel(sourceLabel(source.source)));
+      return document ? `/documents/${document.id}` : null;
+    },
+    [documentsByFileName, documentsByTitle],
+  );
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -167,6 +233,26 @@ export function ChatPage(): JSX.Element {
 
       let failure: string | undefined;
 
+      const typeToken = async (text: string) => {
+        const characters = Array.from(text);
+        for (let index = 0; index < characters.length; index += TYPEWRITER_CHARS_PER_TICK) {
+          if (controller.signal.aborted) return;
+          const chunk = characters
+            .slice(index, index + TYPEWRITER_CHARS_PER_TICK)
+            .join('');
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId
+                ? { ...message, content: message.content + chunk }
+                : message,
+            ),
+          );
+          if (index + TYPEWRITER_CHARS_PER_TICK < characters.length) {
+            await wait(TYPEWRITER_TICK_MS);
+          }
+        }
+      };
+
       try {
         for await (const event of streamChat(
           { question, session_id: sessionIdRef.current ?? undefined },
@@ -175,13 +261,7 @@ export function ChatPage(): JSX.Element {
           if (event.type === 'session') {
             sessionIdRef.current = event.session_id;
           } else if (event.type === 'token') {
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantId
-                  ? { ...message, content: message.content + event.text }
-                  : message,
-              ),
-            );
+            await typeToken(event.text);
           } else if (event.type === 'sources') {
             setMessages((current) =>
               current.map((message) =>
@@ -411,7 +491,7 @@ export function ChatPage(): JSX.Element {
 
                         {!isUser && message.sources && message.sources.length > 0 && (
                           <div className="w-full">
-                            <Sources sources={message.sources} />
+                            <Sources sources={message.sources} sourceHref={sourceHref} />
                           </div>
                         )}
                       </div>
