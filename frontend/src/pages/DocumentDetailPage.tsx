@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { getErrorStatus } from '@/api/errors';
 import { AppShell } from '@/components/layout/AppShell';
@@ -33,6 +33,7 @@ export function DocumentDetailPage(): JSX.Element {
   const { t } = useTranslation();
   const locale = useLocale();
   const params = useParams();
+  const [searchParams] = useSearchParams();
   const id = Number(params.id);
   const { data: document, isLoading, isError, error } = useDocument(id);
 
@@ -40,6 +41,9 @@ export function DocumentDetailPage(): JSX.Element {
   const canPreview = extension === 'PDF';
   const contentQuery = useDocumentContent(id, Boolean(document) && canPreview);
   const objectUrl = useObjectUrl(contentQuery.data);
+  const requestedPage = searchParams.get('page');
+  const targetPage = requestedPage && /^\d+$/.test(requestedPage) ? requestedPage : null;
+  const previewUrl = objectUrl && targetPage ? `${objectUrl}#page=${targetPage}` : objectUrl;
 
   if (isLoading) {
     return (
@@ -123,9 +127,10 @@ export function DocumentDetailPage(): JSX.Element {
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
           <Card className="overflow-hidden p-0">
-            {canPreview && objectUrl ? (
+            {canPreview && previewUrl ? (
               <iframe
-                src={objectUrl}
+                key={previewUrl}
+                src={previewUrl}
                 title={document.title}
                 className="h-[75vh] w-full border-0 bg-white"
               />
