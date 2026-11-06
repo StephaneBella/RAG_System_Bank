@@ -6,13 +6,11 @@
 Ce module est autonome : il se branche sur l'app avec un `include_router` et une ligne
 dans le lifespan (voir main.py). Il ne modifie ni `api_router` ni vos routes existantes.
 """
-
 from __future__ import annotations
 
 import json
 import logging
 from contextlib import contextmanager
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -20,6 +18,11 @@ from pydantic import BaseModel, Field
 
 # À ADAPTER : votre dépendance d'authentification existante (renvoie l'utilisateur courant)
 from .dependencies import get_current_user
+
+from app.services.Agentic_RAG.rag_agent import (
+    AccessDenied, InvalidRequest, RagError, RagService, RagTimeout, setup_audit_logging,
+)
+from app.services.Agentic_RAG.retriever_tools import UserContext
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +32,18 @@ router = APIRouter(prefix="/rag", tags=["rag"])
 # ---------------------------------------------------------------------
 # Cycle de vie du service (appelé depuis le lifespan de main.py)
 # ---------------------------------------------------------------------
-_service: Any = None
+_service: RagService | None = None
 
 
 async def init_rag_service() -> None:
     """Construit le service RAG une seule fois (modèle d'embedding, Qdrant, agent)."""
     global _service
-    from app.services.Agentic_RAG.rag_agent import RagService, setup_audit_logging
-
     setup_audit_logging()
     _service = await RagService.create()
     logger.info("Service RAG initialisé")
 
 
-def get_rag_service() -> Any:
+def get_rag_service() -> RagService:
     if _service is None:
         raise HTTPException(status_code=503, detail="Assistant RAG non initialisé")
     return _service
@@ -63,15 +64,11 @@ RAG_DEPARTMENT_MAP: dict[str, str] = {
 
 
 def _normalize(value: str) -> str:
-    return " ".join(
-        str(value).replace("é", "e").replace("è", "e").replace("ê", "e").lower().split()
-    )
+    return " ".join(str(value).replace("é", "e").replace("è", "e").replace("ê", "e").lower().split())
 
 
-def get_rag_user(current_user=Depends(get_current_user)) -> Any:
+def get_rag_user(current_user=Depends(get_current_user)) -> UserContext:
     """Mappe l'utilisateur authentifié (rôle + département) vers un UserContext RAG."""
-    from app.services.Agentic_RAG.retriever_tools import UserContext
-
     department = getattr(current_user, "department", None)
     department_name = getattr(department, "name", None)
     role = RAG_DEPARTMENT_MAP.get(_normalize(department_name or ""))
@@ -87,8 +84,7 @@ def get_rag_user(current_user=Depends(get_current_user)) -> Any:
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     session_id: str | None = Field(
-        default=None,
-        pattern=r"^[A-Za-z0-9_-]{1,64}$",
+        default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$",
         description="Identifiant de conversation. Omis = nouvelle conversation (renvoyé dans la réponse).",
     )
 
@@ -112,13 +108,6 @@ class ChatResponse(BaseModel):
 # ---------------------------------------------------------------------
 @contextmanager
 def _map_rag_errors():
-    from app.services.Agentic_RAG.rag_agent import (
-        AccessDenied,
-        InvalidRequest,
-        RagError,
-        RagTimeout,
-    )
-
     try:
         yield
     except AccessDenied as e:
@@ -141,8 +130,8 @@ def _sse(event: dict) -> str:
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
-    user: Any = Depends(get_rag_user),
-    service: Any = Depends(get_rag_service),
+    user: UserContext = Depends(get_rag_user),
+    service: RagService = Depends(get_rag_service),
 ):
     with _map_rag_errors():
         result = await service.ask(user, body.question, body.session_id)
@@ -152,8 +141,8 @@ async def chat(
 @router.post("/chat/stream")
 async def chat_stream(
     body: ChatRequest,
-    user: Any = Depends(get_rag_user),
-    service: Any = Depends(get_rag_service),
+    user: UserContext = Depends(get_rag_user),
+    service: RagService = Depends(get_rag_service),
 ):
     """Événements SSE : {"type": "session"|"token"|"sources"|"done"|"error", ...}"""
     events = service.stream(user, body.question, body.session_id)
@@ -164,8 +153,6 @@ async def chat_stream(
         first = await anext(events)
 
     async def event_stream():
-        from app.services.Agentic_RAG.rag_agent import RagError
-
         yield _sse(first)
         try:
             async for event in events:
