@@ -12,7 +12,7 @@ import uuid
 from llama_index.core.node_parser import SemanticSplitterNodeParser
 from llama_index.core.schema import Document, MetadataMode, TextNode
 
-from vectorisation import get_embed_model
+from app.services.Agentic_RAG.Data_preparation.vectorisation import get_embed_model
 
 def build_splitter(
         buffer_size: int = 1,

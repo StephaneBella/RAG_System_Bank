@@ -54,6 +54,33 @@ export interface SearchDocumentsQuery extends DocumentsQuery {
   q: string;
 }
 
+export interface ChatSource {
+  id: number;
+  source: string;
+  page?: number | string | null;
+  doc_type?: string | null;
+  business_layer?: string | null;
+  score?: number | null;
+}
+
+export interface ChatRequest {
+  question: string;
+  session_id?: string;
+}
+
+export interface ChatResponse {
+  answer: string;
+  session_id: string;
+  sources: ChatSource[];
+}
+
+export type RagStreamEvent =
+  | { type: 'session'; session_id: string }
+  | { type: 'token'; text: string }
+  | { type: 'sources'; sources: ChatSource[] }
+  | { type: 'done' }
+  | { type: 'error'; message: string };
+
 export interface Page<T> {
   items: T[];
   total: number;

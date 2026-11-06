@@ -4,21 +4,25 @@
 import logging
 import sys
 import warnings
+from pathlib import Path
 
 from llama_index.core.schema import MetadataMode
 
-from chunking import chunk_documents
-from ingestion import load_pdfs
-from storing import store_nodes
-from vectorisation import embed_texts
+from app.services.Agentic_RAG.Data_preparation.chunking import chunk_documents
+from app.services.Agentic_RAG.Data_preparation.ingestion import load_pdfs
+from app.services.Agentic_RAG.Data_preparation.storing import store_nodes
+from app.services.Agentic_RAG.Data_preparation.vectorisation import embed_texts
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
+
+DEFAULT_DATA_PATH = Path(__file__).resolve().parents[5] / "data" / "documents"
 
 
 def warn(*args, **kwargs):
     pass
 
 warnings.warn = warn
+
 
 def main(data_path: str) -> None:
     documents = load_pdfs(data_path)
@@ -29,5 +33,6 @@ def main(data_path: str) -> None:
     n = store_nodes(nodes, vectors)
     print(f"Terminé : {n} chunks stockés dans Qdrant")
 
+
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "...../data/documents")
+    main(sys.argv[1] if len(sys.argv) > 1 else str(DEFAULT_DATA_PATH))

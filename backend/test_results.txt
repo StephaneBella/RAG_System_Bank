@@ -1,0 +1,8 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- D:\Masters stuff\project management\RAG_project\backend\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\Masters stuff\project management\RAG_project\backend
+configfile: pyproject.toml
+plugins: anyio-4.15.1, langsmith-0.14.17, platformdirs-4.14.3, cov-7.1.0
+collecting ... collected 19 items
+

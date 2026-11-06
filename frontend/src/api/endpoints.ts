@@ -30,4 +30,8 @@ export const endpoints = {
     list: '/audit',
     export: '/audit/export',
   },
+  rag: {
+    chat: '/rag/chat',
+    chatStream: '/rag/chat/stream',
+  },
 } as const;

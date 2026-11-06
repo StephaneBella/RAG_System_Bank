@@ -14,7 +14,7 @@ import { SearchInput } from '@/components/ui/SearchInput';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useDebounce } from '@/hooks/useDebounce';
-import { useDocuments } from '@/hooks/useDocuments';
+import { useDocuments, useSearchDocuments } from '@/hooks/useDocuments';
 import { useLocale } from '@/hooks/useLocale';
 import { formatDate } from '@/lib/utils';
 
@@ -31,26 +31,42 @@ export function LibraryPage(): JSX.Element {
   const [page, setPage] = useState(1);
 
   const debouncedSearch = useDebounce(search, 300);
+  const query = debouncedSearch.trim();
+  const isSearching = query.length > 0;
 
-  const documentsQuery = useDocuments({
-    page,
-    page_size: PAGE_SIZE,
-    sort_by: 'updated_at',
-    order: 'desc',
-  });
+  const listQuery = useDocuments(
+    {
+      page,
+      page_size: PAGE_SIZE,
+      sort_by: 'updated_at',
+      order: 'desc',
+    },
+    !isSearching,
+  );
+  const searchQuery = useSearchDocuments(
+    {
+      q: query,
+      page,
+      page_size: PAGE_SIZE,
+      sort_by: 'updated_at',
+      order: 'desc',
+    },
+    isSearching,
+  );
 
+  const documentsQuery = isSearching ? searchQuery : listQuery;
   const items = useMemo(() => {
     const all = documentsQuery.data?.items ?? [];
-    const needle = debouncedSearch.trim().toLowerCase();
-    return all.filter((doc) => {
-      if (visibility !== 'all' && doc.visibility !== visibility) return false;
-      if (needle && !doc.title.toLowerCase().includes(needle)) return false;
-      return true;
-    });
-  }, [documentsQuery.data, debouncedSearch, visibility]);
+    return visibility === 'all' ? all : all.filter((doc) => doc.visibility === visibility);
+  }, [documentsQuery.data, visibility]);
 
   const handleSearchChange = (value: string) => {
     setSearch(value);
+    setPage(1);
+  };
+
+  const handleVisibilityChange = (value: Visibility | 'all') => {
+    setVisibility(value);
     setPage(1);
   };
 
@@ -84,7 +100,7 @@ export function LibraryPage(): JSX.Element {
           />
           <Select
             value={visibility}
-            onChange={(event) => setVisibility(event.target.value as Visibility | 'all')}
+            onChange={(event) => handleVisibilityChange(event.target.value as Visibility | 'all')}
             className="sm:w-56"
             aria-label={t('library.visibilityLabel')}
           >
@@ -140,6 +156,7 @@ export function LibraryPage(): JSX.Element {
                   onClick={() => {
                     setSearch('');
                     setVisibility('all');
+                    setPage(1);
                   }}
                 >
                   {t('library.resetFilters')}

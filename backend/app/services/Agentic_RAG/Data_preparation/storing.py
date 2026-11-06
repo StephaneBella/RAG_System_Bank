@@ -37,6 +37,11 @@ def ensure_collection(client: QdrantClient, vector_size: int, collection: str = 
         ("doc_type", PayloadSchemaType.KEYWORD),
         ("business_layer", PayloadSchemaType.KEYWORD),
         ("page", PayloadSchemaType.INTEGER),
+        # Clés imbriquées utilisées par le self-query retriever (LangChain)
+        ("metadata.source", PayloadSchemaType.KEYWORD),
+        ("metadata.doc_type", PayloadSchemaType.KEYWORD),
+        ("metadata.business_layer", PayloadSchemaType.KEYWORD),
+        ("metadata.page", PayloadSchemaType.INTEGER),
     ]:
         client.create_payload_index(collection, field, schema) #idempotent
     
@@ -62,7 +67,11 @@ def store_nodes(
         PointStruct(
             id=n.node_id,
             vector=v,
-            payload={"text": n.get_content(metadata_mode=MetadataMode.NONE), **n.metadata},
+            payload={
+                "text": n.get_content(metadata_mode=MetadataMode.NONE),
+                "metadata": dict(n.metadata),  # copie imbriquée : lue par LangChain / self-query
+                **n.metadata,       # copie à plat : lue par LlamaIndex / filtres RBAC
+            },
             
         )
         for n, v in zip(nodes, vectors)
@@ -70,4 +79,4 @@ def store_nodes(
     for i in range(0, len(points), batch_size):
         client.upsert(collection_name=collection, points=points[i : i + batch_size], wait=True)
         logger.info("%d point(s) écrits dans '%s'", len(points), collection)
-        return len(points)
+    return len(points)

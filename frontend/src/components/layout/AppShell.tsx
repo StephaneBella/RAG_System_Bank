@@ -30,6 +30,13 @@ export function AppShell({ children }: { children: ReactNode }): JSX.Element {
             </div>
           </Link>
           <div className="flex items-center gap-3">
+            <Link
+              to="/chat"
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 font-label-md text-label-md text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary sm:px-3"
+            >
+              <Icon name="smart_toy" className="text-[18px]" />
+              <span className="hidden sm:inline">{t('nav.assistant')}</span>
+            </Link>
             {isAdmin && (
               <Link
                 to="/admin/documents"
